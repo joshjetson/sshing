@@ -2,10 +2,10 @@
 name = "sshing"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Josh <josh@zelifcam.net>"]
 description = "A terminal-based SSH connection manager"
 license = "MIT"
-repository = "https://github.com/yourusername/sshing"
+repository = "https://github.com/joshjetson/sshing"
 keywords = ["ssh", "tui", "terminal", "cli", "connection-manager"]
 categories = ["command-line-utilities"]
 
