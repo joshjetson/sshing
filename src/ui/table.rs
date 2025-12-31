@@ -7,7 +7,6 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::models::Host;
 
 /// Render the main table view
 pub fn render_table_view(frame: &mut Frame, app: &App, area: Rect) {
@@ -161,7 +160,7 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
                         Style::default().fg(primary_color)
                     }
                 ),
-                Cell::from(host.note.clone().unwrap_or_else(|| String::new())),
+                Cell::from(host.note.clone().unwrap_or_default()),
             ];
 
             Row::new(cells).style(base_style).height(1)

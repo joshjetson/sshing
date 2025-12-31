@@ -527,7 +527,7 @@ pub fn render_shell_selection_view(
         .iter()
         .enumerate()
         .map(|(i, shell_option)| {
-            let is_selected = current_shell.map_or(false, |s| s == shell_option.name);
+            let is_selected = current_shell.is_some_and(|s| s == shell_option.name);
             let is_highlighted = i == selected_index;
             let checkbox = if is_selected { "[●]" } else { "[ ]" };
 

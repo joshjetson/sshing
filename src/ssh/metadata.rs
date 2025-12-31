@@ -188,6 +188,8 @@ mod tests {
         let host_meta = HostMetadata {
             note: Some("Test note".to_string()),
             tags: vec!["prod".to_string()],
+            ssh_flags: Vec::new(),
+            shell: None,
             last_used: None,
         };
 
@@ -207,6 +209,8 @@ mod tests {
             HostMetadata {
                 note: Some("Production server".to_string()),
                 tags: vec!["prod".to_string(), "web".to_string()],
+                ssh_flags: Vec::new(),
+                shell: None,
                 last_used: None,
             },
         );
@@ -242,6 +246,8 @@ mod tests {
             HostMetadata {
                 note: Some("Test".to_string()),
                 tags: vec!["prod".to_string()],
+                ssh_flags: Vec::new(),
+                shell: None,
                 last_used: None,
             },
         );

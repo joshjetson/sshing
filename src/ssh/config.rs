@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -46,16 +45,6 @@ impl SshConfig {
         } else {
             Err(anyhow::anyhow!("Host index out of bounds"))
         }
-    }
-
-    /// Find a host by its alias
-    pub fn find_host(&self, alias: &str) -> Option<&Host> {
-        self.hosts.iter().find(|h| h.host == alias)
-    }
-
-    /// Check if a host alias already exists
-    pub fn host_exists(&self, alias: &str) -> bool {
-        self.find_host(alias).is_some()
     }
 }
 

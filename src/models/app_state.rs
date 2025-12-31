@@ -1,9 +1,10 @@
 use crate::models::Host;
 
 /// Application mode/state
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum AppMode {
     /// Main table view showing all hosts
+    #[default]
     Table,
 
     /// Creating or editing a host
@@ -112,22 +113,6 @@ pub enum HostField {
 }
 
 impl HostField {
-    /// Get all fields in order
-    pub fn all() -> Vec<HostField> {
-        vec![
-            HostField::HostAlias,
-            HostField::Hostname,
-            HostField::User,
-            HostField::Port,
-            HostField::IdentityFiles,
-            HostField::ProxyJump,
-            HostField::SshFlags,
-            HostField::Shell,
-            HostField::Tags,
-            HostField::Note,
-        ]
-    }
-
     /// Get the next field (for Tab navigation)
     pub fn next(&self) -> HostField {
         match self {
@@ -159,34 +144,13 @@ impl HostField {
             HostField::Note => HostField::Tags,
         }
     }
-
-    /// Get the display label for this field
-    pub fn label(&self) -> &'static str {
-        match self {
-            HostField::HostAlias => "Host (alias)",
-            HostField::Hostname => "Hostname (IP)",
-            HostField::User => "User",
-            HostField::Port => "Port",
-            HostField::IdentityFiles => "SSH Keys",
-            HostField::ProxyJump => "Jump Host",
-            HostField::SshFlags => "SSH Flags",
-            HostField::Shell => "Shell",
-            HostField::Tags => "Tags",
-            HostField::Note => "Note",
-        }
-    }
-}
-
-impl Default for AppMode {
-    fn default() -> Self {
-        AppMode::Table
-    }
 }
 
 /// Sort order for hosts
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortBy {
     /// Sort by host name (default)
+    #[default]
     Name,
     /// Sort by hostname/IP
     Hostname,
@@ -197,16 +161,6 @@ pub enum SortBy {
 }
 
 impl SortBy {
-    /// Get all sort options
-    pub fn all() -> Vec<SortBy> {
-        vec![
-            SortBy::Name,
-            SortBy::Hostname,
-            SortBy::LastUsed,
-            SortBy::User,
-        ]
-    }
-
     /// Get the next sort option (for cycling)
     pub fn next(&self) -> SortBy {
         match self {
@@ -228,8 +182,3 @@ impl SortBy {
     }
 }
 
-impl Default for SortBy {
-    fn default() -> Self {
-        SortBy::Name
-    }
-}

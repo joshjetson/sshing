@@ -89,8 +89,7 @@ fn run_app<B: ratatui::backend::Backend>(
                 } => {
                     let selected_keys = editing_host
                         .identity_file
-                        .as_ref()
-                        .map(|k| k.as_slice())
+                        .as_deref()
                         .unwrap_or(&[]);
                     render_key_selection_view(frame, available_keys, selected_keys, *selected_key_index, area);
                 }

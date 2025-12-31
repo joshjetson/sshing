@@ -165,3 +165,6 @@ docs/.doctrees/
 *.patch
 *.diff
 .cache/
+
+# Personal notes
+/testing.md

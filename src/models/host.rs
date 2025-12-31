@@ -76,11 +76,6 @@ impl Host {
             .unwrap_or(false)
     }
 
-    /// Check if this host has a jump host configured
-    pub fn has_jump_host(&self) -> bool {
-        self.proxy_jump.is_some()
-    }
-
     /// Update the last_used timestamp to now
     pub fn mark_used(&mut self) {
         self.last_used = Some(Utc::now());

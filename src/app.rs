@@ -33,9 +33,6 @@ pub struct App {
     /// Metadata manager
     metadata: Metadata,
 
-    /// Path to SSH config file
-    config_path: PathBuf,
-
     /// Path to metadata file
     metadata_path: PathBuf,
 
@@ -55,8 +52,8 @@ pub struct App {
 impl App {
     /// Create a new application instance
     pub fn new() -> Result<Self> {
-        let config_path = default_ssh_config_path();
         let metadata_path = default_metadata_path();
+        let config_path = default_ssh_config_path();
 
         let mut ssh_config = parse_ssh_config(&config_path)?;
         let mut metadata = load_metadata(&metadata_path)?;
@@ -86,7 +83,6 @@ impl App {
             sort_by: SortBy::default(),
             ssh_config,
             metadata,
-            config_path,
             metadata_path,
             should_quit: false,
             status_message: None,
@@ -216,7 +212,7 @@ impl App {
         if let Some(host) = self.selected_host() {
             // Find the actual index in the full host list
             if let Some(actual_index) = self.hosts.iter().position(|h| h.host == host.host) {
-                let field_buffer = get_field_value(&host, &HostField::HostAlias);
+                let field_buffer = get_field_value(host, &HostField::HostAlias);
                 self.mode = AppMode::EditHost {
                     host_index: Some(actual_index),
                     editing_host: host.clone(),
