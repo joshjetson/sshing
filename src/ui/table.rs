@@ -199,6 +199,7 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let keybindings = vec![
         ("Space", "Connect"),
+        ("r", "Rsync"),
         ("n", "New"),
         ("e", "Edit"),
         ("d", "Delete"),

@@ -24,6 +24,7 @@ pub fn handle_input(app: &mut App) -> Result<()> {
             }
             AppMode::SelectSshFlags { .. } => handle_ssh_flags_selection_input(app, key)?,
             AppMode::SelectShell { .. } => handle_shell_selection_input(app, key)?,
+            AppMode::Rsync { .. } => handle_rsync_input(app, key)?,
         }
     }
 
@@ -47,6 +48,7 @@ fn handle_table_input(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char(' ') | KeyCode::Enter => {
             app.connect_to_selected()?;
         }
+        KeyCode::Char('r') => app.start_rsync(),
         KeyCode::Char('n') => app.start_new_host(),
         KeyCode::Char('e') => app.start_edit_host(),
         KeyCode::Char('d') => app.start_delete_host(),
@@ -595,6 +597,101 @@ fn handle_shell_selection_input(app: &mut App, key: KeyEvent) -> Result<()> {
                 app.return_to_edit(idx, host, field);
             }
             _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle input in rsync mode
+fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::Rsync {
+        editing_mode,
+        focused_field,
+        source_path,
+        dest_path,
+        sync_to_host,
+        ..
+    } = &mut app.mode
+    {
+        if *editing_mode {
+            // In editing mode - typing into a field
+            match key.code {
+                KeyCode::Char(c) => {
+                    match focused_field {
+                        crate::models::app_state::RsyncField::SourcePath => source_path.push(c),
+                        crate::models::app_state::RsyncField::DestPath => dest_path.push(c),
+                        crate::models::app_state::RsyncField::Direction => {
+                            // Direction field - toggle on 't' or 'f'
+                            if c == 't' || c == 'f' {
+                                *sync_to_host = c == 't';
+                            }
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    match focused_field {
+                        crate::models::app_state::RsyncField::SourcePath => {
+                            source_path.pop();
+                        }
+                        crate::models::app_state::RsyncField::DestPath => {
+                            dest_path.pop();
+                        }
+                        _ => {}
+                    }
+                }
+                KeyCode::Tab => {
+                    // Move to next field and exit edit mode
+                    *editing_mode = false;
+                    match focused_field {
+                        crate::models::app_state::RsyncField::SourcePath => {
+                            *focused_field = crate::models::app_state::RsyncField::DestPath;
+                        }
+                        crate::models::app_state::RsyncField::DestPath => {
+                            *focused_field = crate::models::app_state::RsyncField::Direction;
+                        }
+                        crate::models::app_state::RsyncField::Direction => {
+                            *focused_field = crate::models::app_state::RsyncField::SourcePath;
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    // Exit edit mode
+                    *editing_mode = false;
+                }
+                KeyCode::Esc => {
+                    // Exit edit mode without saving
+                    *editing_mode = false;
+                }
+                _ => {}
+            }
+        } else {
+            // Not in editing mode - navigate between fields
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    *focused_field = match focused_field {
+                        crate::models::app_state::RsyncField::SourcePath => crate::models::app_state::RsyncField::DestPath,
+                        crate::models::app_state::RsyncField::DestPath => crate::models::app_state::RsyncField::Direction,
+                        crate::models::app_state::RsyncField::Direction => crate::models::app_state::RsyncField::SourcePath,
+                    };
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    *focused_field = match focused_field {
+                        crate::models::app_state::RsyncField::SourcePath => crate::models::app_state::RsyncField::Direction,
+                        crate::models::app_state::RsyncField::DestPath => crate::models::app_state::RsyncField::SourcePath,
+                        crate::models::app_state::RsyncField::Direction => crate::models::app_state::RsyncField::DestPath,
+                    };
+                }
+                KeyCode::Char('i') | KeyCode::Enter => {
+                    // Enter edit mode
+                    *editing_mode = true;
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    // Return to table
+                    app.return_to_table();
+                }
+                _ => {}
+            }
         }
     }
 

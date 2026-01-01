@@ -338,6 +338,23 @@ impl App {
         }
     }
 
+    /// Start rsync mode for the selected host
+    pub fn start_rsync(&mut self) {
+        if let Some(host) = self.selected_host() {
+            if let Some(actual_index) = self.hosts.iter().position(|h| h.host == host.host) {
+                self.mode = AppMode::Rsync {
+                    host_index: actual_index,
+                    editing_host: host.clone(),
+                    source_path: String::new(),
+                    dest_path: String::new(),
+                    sync_to_host: true, // Default to pushing to host
+                    focused_field: crate::models::app_state::RsyncField::SourcePath,
+                    editing_mode: false,
+                };
+            }
+        }
+    }
+
     /// Delete the confirmed host
     pub fn delete_host(&mut self, index: usize) -> Result<()> {
         if index < self.hosts.len() {

@@ -22,7 +22,7 @@ use ssh::executor::connect_to_host;
 use ui::{
     render_delete_confirmation, render_editor_view, render_help_view, render_key_selection_view,
     render_search_overlay, render_shell_selection_view, render_ssh_flags_selection_view,
-    render_table_view, render_tag_edit_view, render_tag_filter_view,
+    render_table_view, render_tag_edit_view, render_tag_filter_view, render_rsync_view,
 };
 use utils::handle_input;
 
@@ -139,6 +139,9 @@ fn run_app<B: ratatui::backend::Backend>(
                         let host = &app.hosts[*host_index];
                         render_delete_confirmation(frame, host, area);
                     }
+                }
+                AppMode::Rsync { .. } => {
+                    render_rsync_view(frame, app, area);
                 }
             }
         })?;
