@@ -611,6 +611,7 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
         source_path,
         dest_path,
         sync_to_host,
+        editing_host,
         ..
     } = &mut app.mode
     {
@@ -685,6 +686,20 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                 KeyCode::Char('i') | KeyCode::Enter => {
                     // Enter edit mode
                     *editing_mode = true;
+                }
+                KeyCode::Char(' ') => {
+                    // Execute rsync - check if paths are filled
+                    if source_path.is_empty() || dest_path.is_empty() {
+                        app.set_error("Both source and destination paths required");
+                    } else {
+                        // Set pending rsync (main loop will handle execution)
+                        app.pending_rsync = Some((
+                            editing_host.clone(),
+                            source_path.clone(),
+                            dest_path.clone(),
+                            *sync_to_host,
+                        ));
+                    }
                 }
                 KeyCode::Esc | KeyCode::Char('q') => {
                     // Return to table

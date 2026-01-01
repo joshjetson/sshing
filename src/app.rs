@@ -47,6 +47,9 @@ pub struct App {
 
     /// Pending SSH connection (host to connect to)
     pub pending_connection: Option<Host>,
+
+    /// Pending rsync execution (host, source, dest, to_host)
+    pub pending_rsync: Option<(Host, String, String, bool)>,
 }
 
 impl App {
@@ -88,6 +91,7 @@ impl App {
             status_message: None,
             error_message: None,
             pending_connection: None,
+            pending_rsync: None,
         })
     }
 
@@ -465,6 +469,16 @@ impl App {
     /// Return to table view
     pub fn return_to_table(&mut self) {
         self.mode = AppMode::Table;
+    }
+
+    /// Set status message
+    pub fn set_status(&mut self, message: String) {
+        self.status_message = Some(message);
+    }
+
+    /// Set error message
+    pub fn set_error(&mut self, message: impl Into<String>) {
+        self.error_message = Some(message.into());
     }
 
     /// Quit the application

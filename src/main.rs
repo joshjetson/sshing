@@ -185,6 +185,42 @@ fn run_app<B: ratatui::backend::Backend>(
             // Force a redraw
             terminal.clear()?;
         }
+
+        // Check if there's a pending rsync execution
+        if let Some((host, source, dest, to_host)) = app.pending_rsync.clone() {
+            // Cleanup terminal before rsync
+            disable_raw_mode()?;
+            let mut stdout = io::stdout();
+            execute!(
+                stdout,
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+
+            // Execute rsync
+            let (success, output) = crate::ssh::rsync::execute_rsync(&host, &source, &dest, to_host, None)
+                .unwrap_or((false, "Failed to execute rsync".to_string()));
+
+            // Restore terminal after rsync
+            execute!(
+                stdout,
+                EnterAlternateScreen,
+                EnableMouseCapture
+            )?;
+            enable_raw_mode()?;
+
+            // Return to table and show result
+            app.return_to_table();
+            if success {
+                app.set_status(format!("Rsync completed successfully"));
+            } else {
+                app.set_error(format!("Rsync failed:\n{}", output));
+            }
+            app.pending_rsync = None;
+
+            // Force a redraw
+            terminal.clear()?;
+        }
     }
 
     Ok(())
