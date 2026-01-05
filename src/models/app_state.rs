@@ -95,6 +95,33 @@ pub enum AppMode {
         /// Index of host to delete
         host_index: usize,
     },
+
+    /// Rsync file synchronization mode
+    Rsync {
+        /// Index of host being synced with
+        host_index: usize,
+        /// Host being synced with
+        editing_host: Host,
+        /// Source path for rsync
+        source_path: String,
+        /// Destination path for rsync
+        dest_path: String,
+        /// Whether syncing to (true) or from (false) the host
+        sync_to_host: bool,
+        /// Currently focused field (source or dest)
+        focused_field: RsyncField,
+        /// Whether the focused field is in edit mode
+        editing_mode: bool,
+        /// Enable compression (-z flag)
+        compress: bool,
+    },
+}
+
+/// Fields in rsync mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RsyncField {
+    SourcePath,
+    DestPath,
 }
 
 /// Fields in the host edit form

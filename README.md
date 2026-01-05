@@ -114,6 +114,7 @@ That's it! You're now SSH'd into your server.
 - Rust 1.70 or later
 - Cargo package manager
 - SSH client installed on your system
+- Need rsync to use the rsync features
 
 ### Option 1: Install from Source
 

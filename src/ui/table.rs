@@ -199,6 +199,7 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let keybindings = vec![
         ("Space", "Connect"),
+        if app.rsync_available { ("r", "Rsync") } else { ("r", "Rsync (disabled)") },
         ("n", "New"),
         ("e", "Edit"),
         ("d", "Delete"),
@@ -214,10 +215,15 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         if i > 0 {
             footer_spans.push(Span::raw(" │ "));
         }
-        footer_spans.push(Span::styled(
-            *key,
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ));
+
+        // Grey out rsync keybinding if not available
+        let key_style = if !app.rsync_available && *key == "r" {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        };
+
+        footer_spans.push(Span::styled(*key, key_style));
         footer_spans.push(Span::raw(":"));
         footer_spans.push(Span::raw(*desc));
     }

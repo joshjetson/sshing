@@ -47,6 +47,12 @@ pub struct App {
 
     /// Pending SSH connection (host to connect to)
     pub pending_connection: Option<Host>,
+
+    /// Pending rsync execution (host, source, dest, to_host, compress)
+    pub pending_rsync: Option<(Host, String, String, bool, bool)>,
+
+    /// Whether rsync is available on this system
+    pub rsync_available: bool,
 }
 
 impl App {
@@ -88,6 +94,8 @@ impl App {
             status_message: None,
             error_message: None,
             pending_connection: None,
+            pending_rsync: None,
+            rsync_available: crate::ssh::rsync::is_rsync_available(),
         })
     }
 
@@ -338,6 +346,24 @@ impl App {
         }
     }
 
+    /// Start rsync mode for the selected host
+    pub fn start_rsync(&mut self) {
+        if let Some(host) = self.selected_host() {
+            if let Some(actual_index) = self.hosts.iter().position(|h| h.host == host.host) {
+                self.mode = AppMode::Rsync {
+                    host_index: actual_index,
+                    editing_host: host.clone(),
+                    source_path: String::new(),
+                    dest_path: String::new(),
+                    sync_to_host: true, // Default to pushing to host
+                    focused_field: crate::models::app_state::RsyncField::SourcePath,
+                    editing_mode: false,
+                    compress: false, // Default to no compression
+                };
+            }
+        }
+    }
+
     /// Delete the confirmed host
     pub fn delete_host(&mut self, index: usize) -> Result<()> {
         if index < self.hosts.len() {
@@ -448,6 +474,16 @@ impl App {
     /// Return to table view
     pub fn return_to_table(&mut self) {
         self.mode = AppMode::Table;
+    }
+
+    /// Set status message
+    pub fn set_status(&mut self, message: String) {
+        self.status_message = Some(message);
+    }
+
+    /// Set error message
+    pub fn set_error(&mut self, message: impl Into<String>) {
+        self.error_message = Some(message.into());
     }
 
     /// Quit the application

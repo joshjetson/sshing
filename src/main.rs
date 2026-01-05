@@ -22,7 +22,7 @@ use ssh::executor::connect_to_host;
 use ui::{
     render_delete_confirmation, render_editor_view, render_help_view, render_key_selection_view,
     render_search_overlay, render_shell_selection_view, render_ssh_flags_selection_view,
-    render_table_view, render_tag_edit_view, render_tag_filter_view,
+    render_table_view, render_tag_edit_view, render_tag_filter_view, render_rsync_view,
 };
 use utils::handle_input;
 
@@ -140,6 +140,9 @@ fn run_app<B: ratatui::backend::Backend>(
                         render_delete_confirmation(frame, host, area);
                     }
                 }
+                AppMode::Rsync { .. } => {
+                    render_rsync_view(frame, app, area);
+                }
             }
         })?;
 
@@ -178,6 +181,42 @@ fn run_app<B: ratatui::backend::Backend>(
                 Ok(_) => app.complete_connection(true, None),
                 Err(e) => app.complete_connection(false, Some(format!("SSH error: {}", e))),
             }
+
+            // Force a redraw
+            terminal.clear()?;
+        }
+
+        // Check if there's a pending rsync execution
+        if let Some((host, source, dest, to_host, compress)) = app.pending_rsync.clone() {
+            // Cleanup terminal before rsync
+            disable_raw_mode()?;
+            let mut stdout = io::stdout();
+            execute!(
+                stdout,
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+
+            // Execute rsync
+            let (success, output) = crate::ssh::rsync::execute_rsync(&host, &source, &dest, to_host, None, compress)
+                .unwrap_or((false, "Failed to execute rsync".to_string()));
+
+            // Restore terminal after rsync
+            execute!(
+                stdout,
+                EnterAlternateScreen,
+                EnableMouseCapture
+            )?;
+            enable_raw_mode()?;
+
+            // Return to table and show result
+            app.return_to_table();
+            if success {
+                app.set_status(format!("Rsync completed successfully"));
+            } else {
+                app.set_error(format!("Rsync failed:\n{}", output));
+            }
+            app.pending_rsync = None;
 
             // Force a redraw
             terminal.clear()?;
