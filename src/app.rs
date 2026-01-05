@@ -50,6 +50,9 @@ pub struct App {
 
     /// Pending rsync execution (host, source, dest, to_host, compress)
     pub pending_rsync: Option<(Host, String, String, bool, bool)>,
+
+    /// Whether rsync is available on this system
+    pub rsync_available: bool,
 }
 
 impl App {
@@ -92,6 +95,7 @@ impl App {
             error_message: None,
             pending_connection: None,
             pending_rsync: None,
+            rsync_available: crate::ssh::rsync::is_rsync_available(),
         })
     }
 

@@ -75,3 +75,12 @@ pub fn execute_rsync(
 
     Ok((success, output_str))
 }
+
+/// Check if rsync is available on the system
+pub fn is_rsync_available() -> bool {
+    std::process::Command::new("rsync")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}

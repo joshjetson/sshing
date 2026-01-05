@@ -48,7 +48,13 @@ fn handle_table_input(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char(' ') | KeyCode::Enter => {
             app.connect_to_selected()?;
         }
-        KeyCode::Char('r') => app.start_rsync(),
+        KeyCode::Char('r') => {
+            if app.rsync_available {
+                app.start_rsync();
+            } else {
+                app.set_error("rsync is not installed on this system");
+            }
+        }
         KeyCode::Char('n') => app.start_new_host(),
         KeyCode::Char('e') => app.start_edit_host(),
         KeyCode::Char('d') => app.start_delete_host(),
