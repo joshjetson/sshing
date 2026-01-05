@@ -604,6 +604,172 @@ fn handle_shell_selection_input(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 /// Handle input in rsync mode
+/// Autocomplete a path by finding the longest common prefix of matching entries
+fn autocomplete_path(partial_path: &str) -> Option<String> {
+    use std::path::Path;
+    use std::fs;
+
+    // Handle empty path
+    if partial_path.is_empty() {
+        return None;
+    }
+
+    let path = Path::new(partial_path);
+    let (dir, prefix) = if partial_path.ends_with('/') {
+        (path.to_path_buf(), String::new())
+    } else {
+        match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => (p.to_path_buf(), path.file_name()?.to_string_lossy().to_string()),
+            _ => (Path::new(".").to_path_buf(), partial_path.to_string()),
+        }
+    };
+
+    // List entries in the directory
+    let entries: Vec<String> = match fs::read_dir(&dir) {
+        Ok(entries) => entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with(&prefix) {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        Err(_) => return None,
+    };
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    // Find longest common prefix
+    let mut common = entries[0].clone();
+    for entry in &entries[1..] {
+        while !entry.starts_with(&common) {
+            common.pop();
+        }
+    }
+
+    // Return the completed path
+    if partial_path.ends_with('/') {
+        Some(format!("{}{}", partial_path, common))
+    } else {
+        match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => {
+                let parent_str = p.display().to_string();
+                if parent_str == "/" {
+                    Some(format!("/{}", common))
+                } else {
+                    Some(format!("{}/{}", parent_str, common))
+                }
+            }
+            _ => Some(common),
+        }
+    }
+}
+
+/// Autocomplete a remote path using SSH to list remote directory
+fn autocomplete_path_remote(host: &crate::models::Host, partial_path: &str) -> Option<String> {
+    use std::process::Command;
+
+    // Handle empty path
+    if partial_path.is_empty() {
+        return None;
+    }
+
+    // Split path into directory and prefix
+    let (dir, prefix) = if partial_path.ends_with('/') {
+        (partial_path.to_string(), String::new())
+    } else {
+        match partial_path.rfind('/') {
+            Some(idx) => {
+                let dir = &partial_path[..=idx];
+                let prefix = &partial_path[idx + 1..];
+                (dir.to_string(), prefix.to_string())
+            }
+            None => {
+                // No directory separator, list current directory
+                ("./".to_string(), partial_path.to_string())
+            }
+        }
+    };
+
+    // Build SSH command
+    let mut cmd = Command::new("ssh");
+
+    // Add SSH options
+    if let Some(ref user) = host.user {
+        cmd.arg(format!("{}@{}", user, host.hostname));
+    } else {
+        cmd.arg(&host.hostname);
+    }
+
+    if let Some(port) = host.port {
+        cmd.arg("-p").arg(port.to_string());
+    }
+
+    if let Some(ref identity_files) = host.identity_file {
+        for file in identity_files {
+            cmd.arg("-i").arg(file);
+        }
+    }
+
+    cmd.arg("-o").arg("StrictHostKeyChecking=no");
+
+    // Execute `ls -1` on the remote directory
+    cmd.arg(format!("ls -1 '{}'", dir));
+
+    // Execute SSH and capture output
+    match cmd.output() {
+        Ok(output) => {
+            if !output.status.success() {
+                return None;
+            }
+
+            let output_str = String::from_utf8_lossy(&output.stdout);
+
+            // Parse ls output - each line is a filename
+            let entries: Vec<String> = output_str
+                .lines()
+                .filter_map(|line| {
+                    let name = line.trim();
+                    if !name.is_empty() && name.starts_with(&prefix) {
+                        Some(name.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if entries.is_empty() {
+                return None;
+            }
+
+            // Find longest common prefix
+            let mut common = entries[0].clone();
+            for entry in &entries[1..] {
+                while !entry.starts_with(&common) {
+                    common.pop();
+                }
+            }
+
+            // Return the completed path
+            if partial_path.ends_with('/') {
+                Some(format!("{}{}", partial_path, common))
+            } else {
+                Some(format!("{}{}", dir, common))
+            }
+        }
+        Err(_) => {
+            // If SSH fails, just return None and let user type manually
+            None
+        }
+    }
+}
+
+/// Handle input in rsync mode
 fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
     if let AppMode::Rsync {
         editing_mode,
@@ -612,6 +778,7 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
         dest_path,
         sync_to_host,
         editing_host,
+        compress,
         ..
     } = &mut app.mode
     {
@@ -622,12 +789,6 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                     match focused_field {
                         crate::models::app_state::RsyncField::SourcePath => source_path.push(c),
                         crate::models::app_state::RsyncField::DestPath => dest_path.push(c),
-                        crate::models::app_state::RsyncField::Direction => {
-                            // Direction field - toggle on 't' or 'f'
-                            if c == 't' || c == 'f' {
-                                *sync_to_host = c == 't';
-                            }
-                        }
                     }
                 }
                 KeyCode::Backspace => {
@@ -638,10 +799,42 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                         crate::models::app_state::RsyncField::DestPath => {
                             dest_path.pop();
                         }
-                        _ => {}
                     }
                 }
                 KeyCode::Tab => {
+                    // Autocomplete in path fields (dynamically choose local or remote)
+                    match focused_field {
+                        crate::models::app_state::RsyncField::SourcePath => {
+                            // Source is remote if sync_to_host is false, local if true
+                            if *sync_to_host {
+                                // Source is local
+                                if let Some(completed) = autocomplete_path(source_path) {
+                                    *source_path = completed;
+                                }
+                            } else {
+                                // Source is remote
+                                if let Some(completed) = autocomplete_path_remote(editing_host, source_path) {
+                                    *source_path = completed;
+                                }
+                            }
+                        }
+                        crate::models::app_state::RsyncField::DestPath => {
+                            // Dest is remote if sync_to_host is true, local if false
+                            if *sync_to_host {
+                                // Dest is remote
+                                if let Some(completed) = autocomplete_path_remote(editing_host, dest_path) {
+                                    *dest_path = completed;
+                                }
+                            } else {
+                                // Dest is local
+                                if let Some(completed) = autocomplete_path(dest_path) {
+                                    *dest_path = completed;
+                                }
+                            }
+                        }
+                    }
+                }
+                KeyCode::Enter => {
                     // Move to next field and exit edit mode
                     *editing_mode = false;
                     match focused_field {
@@ -649,16 +842,9 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                             *focused_field = crate::models::app_state::RsyncField::DestPath;
                         }
                         crate::models::app_state::RsyncField::DestPath => {
-                            *focused_field = crate::models::app_state::RsyncField::Direction;
-                        }
-                        crate::models::app_state::RsyncField::Direction => {
                             *focused_field = crate::models::app_state::RsyncField::SourcePath;
                         }
                     }
-                }
-                KeyCode::Enter => {
-                    // Exit edit mode
-                    *editing_mode = false;
                 }
                 KeyCode::Esc => {
                     // Exit edit mode without saving
@@ -667,25 +853,31 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                 _ => {}
             }
         } else {
-            // Not in editing mode - navigate between fields
+            // Not in editing mode - navigate between fields or toggle settings
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
                     *focused_field = match focused_field {
                         crate::models::app_state::RsyncField::SourcePath => crate::models::app_state::RsyncField::DestPath,
-                        crate::models::app_state::RsyncField::DestPath => crate::models::app_state::RsyncField::Direction,
-                        crate::models::app_state::RsyncField::Direction => crate::models::app_state::RsyncField::SourcePath,
+                        crate::models::app_state::RsyncField::DestPath => crate::models::app_state::RsyncField::SourcePath,
                     };
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
                     *focused_field = match focused_field {
-                        crate::models::app_state::RsyncField::SourcePath => crate::models::app_state::RsyncField::Direction,
+                        crate::models::app_state::RsyncField::SourcePath => crate::models::app_state::RsyncField::DestPath,
                         crate::models::app_state::RsyncField::DestPath => crate::models::app_state::RsyncField::SourcePath,
-                        crate::models::app_state::RsyncField::Direction => crate::models::app_state::RsyncField::DestPath,
                     };
                 }
                 KeyCode::Char('i') | KeyCode::Enter => {
                     // Enter edit mode
                     *editing_mode = true;
+                }
+                KeyCode::Char('r') => {
+                    // Toggle direction
+                    *sync_to_host = !*sync_to_host;
+                }
+                KeyCode::Char('z') => {
+                    // Toggle compression flag
+                    *compress = !*compress;
                 }
                 KeyCode::Char(' ') => {
                     // Execute rsync - check if paths are filled
@@ -698,6 +890,7 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                             source_path.clone(),
                             dest_path.clone(),
                             *sync_to_host,
+                            *compress,
                         ));
                     }
                 }

@@ -112,6 +112,8 @@ pub enum AppMode {
         focused_field: RsyncField,
         /// Whether the focused field is in edit mode
         editing_mode: bool,
+        /// Enable compression (-z flag)
+        compress: bool,
     },
 }
 
@@ -120,7 +122,6 @@ pub enum AppMode {
 pub enum RsyncField {
     SourcePath,
     DestPath,
-    Direction,
 }
 
 /// Fields in the host edit form

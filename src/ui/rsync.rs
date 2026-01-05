@@ -18,6 +18,7 @@ pub fn render_rsync_view(frame: &mut Frame, app: &App, area: Rect) {
         sync_to_host,
         focused_field,
         editing_mode,
+        compress,
         ..
     } = &app.mode
     {
@@ -35,11 +36,10 @@ pub fn render_rsync_view(frame: &mut Frame, app: &App, area: Rect) {
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(title, chunks[0]);
 
-        // Form fields area
+        // Form fields area - now just 2 fields (Source and Dest)
         let field_chunks = Layout::vertical([
             Constraint::Length(3), // Source path
             Constraint::Length(3), // Dest path
-            Constraint::Length(3), // Direction
             Constraint::Min(0),    // Spacer
         ])
         .split(chunks[1]);
@@ -55,7 +55,8 @@ pub fn render_rsync_view(frame: &mut Frame, app: &App, area: Rect) {
             Style::default()
         };
 
-        let source_label = Span::styled("Source Path: ", Style::default().fg(Color::White));
+        let source_bracket = if *sync_to_host { "[local]" } else { "[remote]" };
+        let source_label = Span::styled(format!("Source {} ", source_bracket), Style::default().fg(Color::White));
         let source_value = Span::raw(source_path.clone());
         let source_hint = if *focused_field == RsyncField::SourcePath && *editing_mode {
             Span::styled(" (editing)", Style::default().fg(Color::DarkGray))
@@ -80,7 +81,8 @@ pub fn render_rsync_view(frame: &mut Frame, app: &App, area: Rect) {
             Style::default()
         };
 
-        let dest_label = Span::styled("Dest Path: ", Style::default().fg(Color::White));
+        let dest_bracket = if *sync_to_host { "[remote]" } else { "[local]" };
+        let dest_label = Span::styled(format!("Dest {} ", dest_bracket), Style::default().fg(Color::White));
         let dest_value = Span::raw(dest_path.clone());
         let dest_hint = if *focused_field == RsyncField::DestPath && *editing_mode {
             Span::styled(" (editing)", Style::default().fg(Color::DarkGray))
@@ -94,50 +96,47 @@ pub fn render_rsync_view(frame: &mut Frame, app: &App, area: Rect) {
             .block(Block::default().borders(Borders::ALL).title(" Destination "));
         frame.render_widget(dest_widget, field_chunks[1]);
 
-        // Direction field
-        let direction_style = if *focused_field == RsyncField::Direction {
-            if *editing_mode {
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            }
-        } else {
-            Style::default()
-        };
-
-        let direction_label = Span::styled("Direction: ", Style::default().fg(Color::White));
-        let direction_value = if *sync_to_host {
-            Span::styled("→ To Host (t)", Style::default().fg(Color::Cyan))
-        } else {
-            Span::styled("← From Host (f)", Style::default().fg(Color::Magenta))
-        };
-        let direction_input = Line::from(vec![direction_label, direction_value]);
-
-        let direction_widget = Paragraph::new(direction_input)
-            .style(direction_style)
-            .block(Block::default().borders(Borders::ALL).title(" Sync Direction "));
-        frame.render_widget(direction_widget, field_chunks[2]);
-
         // Help footer
         let help_text = if *editing_mode {
             vec![
                 Line::from(Span::styled(
-                    "i/Enter: Edit  │  Tab: Next Field  │  Backspace: Delete  │  Esc: Cancel",
+                    "Tab: Complete  │  Enter: Next Field  │  Backspace: Delete  │  Esc: Cancel",
                     Style::default().fg(Color::Gray),
                 )),
             ]
         } else {
+            let direction_text = if *sync_to_host {
+                "Local → Remote"
+            } else {
+                "Remote → Local"
+            };
+            let direction_span = Span::styled(
+                format!("[r] Direction: {}", direction_text),
+                Style::default().fg(Color::Cyan)
+            );
+
+            let compress_span = if *compress {
+                Span::styled("[z] Compress: ON", Style::default().fg(Color::Green))
+            } else {
+                Span::styled("[z] Compress: off", Style::default().fg(Color::DarkGray))
+            };
+
             vec![
-                Line::from(Span::styled(
-                    format!(
-                        "Host: {}  │  User: {}",
-                        editing_host.hostname,
-                        editing_host.user.as_deref().unwrap_or("(none)")
+                Line::from(vec![
+                    Span::styled(
+                        format!(
+                            "Host: {}  │  User: {}  │  ",
+                            editing_host.hostname,
+                            editing_host.user.as_deref().unwrap_or("(none)")
+                        ),
+                        Style::default().fg(Color::Gray),
                     ),
-                    Style::default().fg(Color::Gray),
-                )),
+                    direction_span,
+                    Span::raw("  │  "),
+                    compress_span,
+                ]),
                 Line::from(Span::styled(
-                    "k/↑: Up  │  j/↓: Down  │  i/Enter: Edit  │  Esc/q: Back",
+                    "k/↑: Up  │  j/↓: Down  │  i/Enter: Edit  │  Space: Execute  │  Esc/q: Back",
                     Style::default().fg(Color::Gray),
                 )),
             ]

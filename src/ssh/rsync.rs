@@ -10,6 +10,7 @@ pub fn execute_rsync(
     dest: &str,
     to_host: bool,
     _password: Option<String>,
+    compress: bool,
 ) -> Result<(bool, String)> {
     let mut cmd = Command::new("rsync");
 
@@ -45,6 +46,11 @@ pub fn execute_rsync(
 
     // Add -a (archive) flag by default
     cmd.arg("-a");
+
+    // Add -z (compress) flag if requested
+    if compress {
+        cmd.arg("-z");
+    }
 
     // Add source and destination
     if to_host {

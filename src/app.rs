@@ -48,8 +48,8 @@ pub struct App {
     /// Pending SSH connection (host to connect to)
     pub pending_connection: Option<Host>,
 
-    /// Pending rsync execution (host, source, dest, to_host)
-    pub pending_rsync: Option<(Host, String, String, bool)>,
+    /// Pending rsync execution (host, source, dest, to_host, compress)
+    pub pending_rsync: Option<(Host, String, String, bool, bool)>,
 }
 
 impl App {
@@ -354,6 +354,7 @@ impl App {
                     sync_to_host: true, // Default to pushing to host
                     focused_field: crate::models::app_state::RsyncField::SourcePath,
                     editing_mode: false,
+                    compress: false, // Default to no compression
                 };
             }
         }
