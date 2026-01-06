@@ -40,6 +40,10 @@ pub struct Metadata {
     /// Map of host alias to metadata
     #[serde(default)]
     pub hosts: HashMap<String, HostMetadata>,
+
+    /// Docker container script path associations (key: "host:container", value: script_path)
+    #[serde(default)]
+    pub docker_container_scripts: HashMap<String, String>,
 }
 
 fn default_version() -> String {
@@ -53,7 +57,25 @@ impl Metadata {
             version: default_version(),
             global_tags: Vec::new(),
             hosts: HashMap::new(),
+            docker_container_scripts: HashMap::new(),
         }
+    }
+
+    /// Get the container key for docker script associations
+    fn docker_container_key(host_name: &str, container_name: &str) -> String {
+        format!("{}:{}", host_name, container_name)
+    }
+
+    /// Get the saved script path for a container
+    pub fn get_script_path(&self, host_name: &str, container_name: &str) -> Option<String> {
+        let key = Self::docker_container_key(host_name, container_name);
+        self.docker_container_scripts.get(&key).cloned()
+    }
+
+    /// Save a script path association for a container
+    pub fn set_script_path(&mut self, host_name: &str, container_name: &str, script_path: String) {
+        let key = Self::docker_container_key(host_name, container_name);
+        self.docker_container_scripts.insert(key, script_path);
     }
 
     /// Add a tag to the global tag pool

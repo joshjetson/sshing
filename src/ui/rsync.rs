@@ -136,7 +136,7 @@ pub fn render_rsync_view(frame: &mut Frame, app: &App, area: Rect) {
                     compress_span,
                 ]),
                 Line::from(Span::styled(
-                    "k/↑: Up  │  j/↓: Down  │  i/Enter: Edit  │  Space: Execute  │  Esc/q: Back",
+                    "k/↑: Up  │  j/↓: Down  │  i/Enter: Edit  │  [b]rowse  │  Space: Execute  │  Esc/q: Back",
                     Style::default().fg(Color::Gray),
                 )),
             ]
