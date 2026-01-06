@@ -2,6 +2,10 @@
 
 A modern, terminal-based SSH connection manager with an intuitive TUI interface.
 
+
+
+<img src="https://i.imgur.com/GmWMolD.png">
+
 ---
 
 ## Table of Contents
