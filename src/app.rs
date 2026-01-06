@@ -205,6 +205,17 @@ impl App {
                     a.user.cmp(&b.user)
                 });
             }
+            SortBy::Tags => {
+                filtered.sort_by(|a, b| {
+                    // Sort by first tag alphabetically, hosts without tags go last
+                    match (a.tags.first(), b.tags.first()) {
+                        (Some(tag_a), Some(tag_b)) => tag_a.cmp(tag_b),
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => std::cmp::Ordering::Equal,
+                    }
+                });
+            }
         }
 
         filtered
