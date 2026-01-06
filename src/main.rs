@@ -1,4 +1,5 @@
 mod app;
+mod docker;
 mod models;
 mod ssh;
 mod ui;
@@ -23,6 +24,11 @@ use ui::{
     render_delete_confirmation, render_editor_view, render_help_view, render_key_selection_view,
     render_search_overlay, render_shell_selection_view, render_ssh_flags_selection_view,
     render_table_view, render_tag_edit_view, render_tag_filter_view, render_rsync_view,
+    render_rsync_file_browser,
+    render_container_list, render_docker_confirm,
+    render_logs_viewer, render_file_browser, render_stats_viewer, render_inspect_viewer,
+    render_process_viewer, render_env_inspector, render_script_viewer,
+    render_script_edit, render_env_var_dialog,
 };
 use utils::handle_input;
 
@@ -143,6 +149,47 @@ fn run_app<B: ratatui::backend::Backend>(
                 AppMode::Rsync { .. } => {
                     render_rsync_view(frame, app, area);
                 }
+                AppMode::RsyncFileBrowser { .. } => {
+                    render_rsync_file_browser(frame, app);
+                }
+
+                // Docker modes
+                AppMode::ContainerList { .. } => {
+                    render_container_list(frame, app, area);
+                }
+                AppMode::ConfirmDockerAction { action, .. } => {
+                    render_container_list(frame, app, area);
+                    render_docker_confirm(frame, action, area);
+                }
+                AppMode::LogsViewer { .. } => {
+                    render_logs_viewer(frame, app);
+                }
+                AppMode::StatsViewer { .. } => {
+                    render_stats_viewer(frame, app);
+                }
+                AppMode::ProcessViewer { .. } => {
+                    render_process_viewer(frame, app);
+                }
+                AppMode::InspectViewer { .. } => {
+                    render_inspect_viewer(frame, app);
+                }
+                AppMode::EnvInspector { .. } => {
+                    render_env_inspector(frame, app);
+                }
+                AppMode::ScriptViewer { .. } => {
+                    render_script_viewer(frame, app);
+                }
+                AppMode::ScriptEdit { .. } => {
+                    render_script_edit(frame, app, area);
+                }
+                AppMode::EnvVarEditor { .. } => {
+                    // Render script edit in background, then overlay the dialog
+                    render_script_edit(frame, app, area);
+                    render_env_var_dialog(frame, app);
+                }
+                AppMode::FileBrowser { .. } => {
+                    render_file_browser(frame, app);
+                }
             }
         })?;
 
@@ -221,7 +268,20 @@ fn run_app<B: ratatui::backend::Backend>(
             // Force a redraw
             terminal.clear()?;
         }
+
+        // Process pending Docker SSH commands
+        if let Some(pending) = app.pending_ssh_command.take() {
+            match app.execute_ssh_command(&pending.host, &pending.command) {
+                Ok(output) => {
+                    app.handle_ssh_output(output, pending.command_type);
+                }
+                Err(e) => {
+                    app.set_error(format!("SSH error: {}", e));
+                }
+            }
+        }
     }
 
     Ok(())
 }
+

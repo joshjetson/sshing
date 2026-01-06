@@ -199,10 +199,11 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let keybindings = vec![
         ("Space", "Connect"),
+        ("d", "Docker"),
         if app.rsync_available { ("r", "Rsync") } else { ("r", "Rsync (disabled)") },
         ("n", "New"),
         ("e", "Edit"),
-        ("d", "Delete"),
+        ("D", "Delete"),
         ("/", "Search"),
         ("t", "Tags"),
         ("s", "Sort"),

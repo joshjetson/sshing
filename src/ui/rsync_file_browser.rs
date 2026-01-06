@@ -1,0 +1,159 @@
+use ratatui::{
+    layout::{Constraint, Layout, Rect, Alignment},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
+    Frame,
+};
+
+use crate::app::App;
+use crate::models::AppMode;
+use crate::models::app_state::RsyncField;
+
+pub fn render(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    let chunks = Layout::vertical([
+        Constraint::Length(3),  // Header with path
+        Constraint::Min(0),     // File listing
+        Constraint::Length(3),  // Footer
+    ])
+    .split(area);
+
+    render_header(frame, app, chunks[0]);
+    render_file_list(frame, app, chunks[1]);
+    render_footer(frame, app, chunks[2]);
+}
+
+fn render_header(frame: &mut Frame, app: &App, area: Rect) {
+    let (current_path, is_remote, target_field) = match &app.mode {
+        AppMode::RsyncFileBrowser { current_path, is_remote, target_field, .. } => {
+            (current_path.clone(), *is_remote, *target_field)
+        }
+        _ => (String::new(), false, RsyncField::SourcePath),
+    };
+
+    let location = if is_remote { "Remote" } else { "Local" };
+    let target = match target_field {
+        RsyncField::SourcePath => "Source",
+        RsyncField::DestPath => "Destination",
+    };
+
+    let title = Paragraph::new(Line::from(vec![
+        Span::styled(" Browse for ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(target, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled(location, Style::default().fg(Color::Green)),
+        Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&current_path, Style::default().fg(Color::White)),
+    ]))
+    .block(Block::default().borders(Borders::ALL));
+
+    frame.render_widget(title, area);
+}
+
+fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
+    let (entries, selected_index, loading) = match &app.mode {
+        AppMode::RsyncFileBrowser { entries, selected_index, loading, .. } => {
+            (entries, *selected_index, *loading)
+        }
+        _ => return,
+    };
+
+    if loading {
+        let loading_msg = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled("Loading...", Style::default().fg(Color::Yellow))),
+        ])
+        .block(Block::default().borders(Borders::ALL).title(" Files "))
+        .alignment(Alignment::Center);
+        frame.render_widget(loading_msg, area);
+        return;
+    }
+
+    if entries.is_empty() {
+        let empty_msg = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled("Directory is empty", Style::default().fg(Color::DarkGray))),
+        ])
+        .block(Block::default().borders(Borders::ALL).title(" Files "))
+        .alignment(Alignment::Center);
+        frame.render_widget(empty_msg, area);
+        return;
+    }
+
+    // Calculate visible rows (area height - 2 for borders)
+    let visible_rows = area.height.saturating_sub(2) as usize;
+    let total_entries = entries.len();
+
+    // Compute scroll_offset to keep selection visible
+    let scroll_offset = if visible_rows == 0 {
+        0
+    } else if selected_index < visible_rows / 2 {
+        0
+    } else if selected_index >= total_entries.saturating_sub(visible_rows / 2) {
+        total_entries.saturating_sub(visible_rows)
+    } else {
+        selected_index.saturating_sub(visible_rows / 2)
+    };
+
+    // Only render visible entries
+    let end_index = (scroll_offset + visible_rows).min(total_entries);
+    let visible_entries = &entries[scroll_offset..end_index];
+
+    let items: Vec<ListItem> = visible_entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let actual_index = scroll_offset + i;
+            let marker = if actual_index == selected_index { "> " } else { "  " };
+
+            let (icon, style) = if entry.is_dir {
+                ("D ", Style::default().fg(Color::Cyan))
+            } else {
+                ("  ", Style::default().fg(Color::White))
+            };
+
+            let line_style = if actual_index == selected_index {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                style
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::raw(marker),
+                Span::styled(icon, style),
+                Span::styled(&entry.name, line_style),
+            ]))
+        })
+        .collect();
+
+    // Show scroll position in title if needed
+    let title = if total_entries > visible_rows {
+        format!(" Files ({}-{} of {}) ", scroll_offset + 1, end_index, total_entries)
+    } else {
+        format!(" Files ({}) ", total_entries)
+    };
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title));
+
+    frame.render_widget(list, area);
+}
+
+fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let help = "[Enter] Open/Select  [Space] Select Dir  [Esc] Cancel  [j/k] Navigate";
+
+    let (message, style) = if let Some(ref err) = app.error_message {
+        (err.clone(), Style::default().fg(Color::Red))
+    } else if let Some(ref status) = app.status_message {
+        (status.clone(), Style::default().fg(Color::Yellow))
+    } else {
+        (help.to_string(), Style::default().fg(Color::DarkGray))
+    };
+
+    let footer = Paragraph::new(Line::from(Span::styled(message, style)))
+        .block(Block::default().borders(Borders::ALL));
+
+    frame.render_widget(footer, area);
+}

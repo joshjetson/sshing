@@ -2,10 +2,15 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
-use crate::models::{AppMode, HostField};
+use crate::models::{AppMode, HostField, ScriptSection};
 
-/// Handle keyboard input based on current app mode
+/// Handle keyboard input based on current app mode (with timeout for non-blocking)
 pub fn handle_input(app: &mut App) -> Result<()> {
+    // Use poll with timeout so we don't block - allows SSH commands to be processed
+    if !event::poll(std::time::Duration::from_millis(100))? {
+        return Ok(());
+    }
+
     if let Event::Key(key) = event::read()? {
         // Clear messages on any key press
         app.clear_messages();
@@ -25,6 +30,20 @@ pub fn handle_input(app: &mut App) -> Result<()> {
             AppMode::SelectSshFlags { .. } => handle_ssh_flags_selection_input(app, key)?,
             AppMode::SelectShell { .. } => handle_shell_selection_input(app, key)?,
             AppMode::Rsync { .. } => handle_rsync_input(app, key)?,
+            AppMode::RsyncFileBrowser { .. } => handle_rsync_file_browser_input(app, key)?,
+
+            // Docker modes
+            AppMode::ContainerList { .. } => handle_container_list_input(app, key)?,
+            AppMode::ConfirmDockerAction { .. } => handle_docker_confirm_input(app, key)?,
+            AppMode::LogsViewer { .. } => handle_logs_input(app, key)?,
+            AppMode::StatsViewer { .. } => handle_stats_input(app, key)?,
+            AppMode::ProcessViewer { .. } => handle_process_input(app, key)?,
+            AppMode::InspectViewer { .. } => handle_inspect_input(app, key)?,
+            AppMode::EnvInspector { .. } => handle_env_inspector_input(app, key)?,
+            AppMode::ScriptViewer { .. } => handle_script_viewer_input(app, key)?,
+            AppMode::ScriptEdit { .. } => handle_script_edit_input(app, key)?,
+            AppMode::EnvVarEditor { .. } => handle_env_var_editor_input(app, key)?,
+            AppMode::FileBrowser { .. } => handle_file_browser_input(app, key)?,
         }
     }
 
@@ -57,7 +76,8 @@ fn handle_table_input(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Char('n') => app.start_new_host(),
         KeyCode::Char('e') => app.start_edit_host(),
-        KeyCode::Char('d') => app.start_delete_host(),
+        KeyCode::Char('D') => app.start_delete_host(),
+        KeyCode::Char('d') => app.start_docker_mode(),
 
         // Filters
         KeyCode::Char('/') => app.start_search(),
@@ -885,6 +905,10 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
                     // Toggle compression flag
                     *compress = !*compress;
                 }
+                KeyCode::Char('b') => {
+                    // Browse for file/directory
+                    app.start_rsync_browse();
+                }
                 KeyCode::Char(' ') => {
                     // Execute rsync - check if paths are filled
                     if source_path.is_empty() || dest_path.is_empty() {
@@ -909,5 +933,582 @@ fn handle_rsync_input(app: &mut App, key: KeyEvent) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Handle input in rsync file browser mode
+fn handle_rsync_file_browser_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::RsyncFileBrowser {
+        current_path,
+        entries,
+        selected_index,
+        loading,
+        ..
+    } = &mut app.mode
+    {
+        if *loading {
+            // Only allow escape while loading
+            if key.code == KeyCode::Esc {
+                app.rsync_cancel_browse();
+            }
+            return Ok(());
+        }
+
+        let current_path = current_path.clone();
+        let entries_len = entries.len();
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if *selected_index < entries_len.saturating_sub(1) {
+                    *selected_index += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *selected_index = selected_index.saturating_sub(1);
+            }
+            KeyCode::Char('g') => {
+                *selected_index = 0;
+            }
+            KeyCode::Char('G') => {
+                *selected_index = entries_len.saturating_sub(1);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *selected_index = (*selected_index + 10).min(entries_len.saturating_sub(1));
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *selected_index = selected_index.saturating_sub(10);
+            }
+            KeyCode::Enter => {
+                // Navigate into directory or select file
+                if *selected_index < entries.len() {
+                    let entry = &entries[*selected_index];
+                    if entry.is_dir {
+                        let new_path = if entry.name == ".." {
+                            // Go up one directory
+                            if let Some(parent) = std::path::Path::new(&current_path).parent() {
+                                parent.to_string_lossy().to_string()
+                            } else {
+                                "/".to_string()
+                            }
+                        } else {
+                            // Enter subdirectory
+                            if current_path.ends_with('/') {
+                                format!("{}{}", current_path, entry.name)
+                            } else {
+                                format!("{}/{}", current_path, entry.name)
+                            }
+                        };
+                        app.rsync_navigate_to(new_path);
+                    } else {
+                        // Select the file
+                        app.rsync_select_current_path();
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                // Select current directory (useful for selecting folders as source/dest)
+                app.rsync_select_current_path();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.rsync_cancel_browse();
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+// ==================== Docker Input Handlers ====================
+
+/// Handle input in container list view
+fn handle_container_list_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        // Navigation
+        KeyCode::Char('j') | KeyCode::Down => app.docker_select_next(),
+        KeyCode::Char('k') | KeyCode::Up => app.docker_select_previous(),
+        KeyCode::Char('g') => app.docker_select_first(),
+        KeyCode::Char('G') => app.docker_select_last(),
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.docker_page_down(),
+        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.docker_page_up(),
+
+        // Container operations
+        KeyCode::Char('p') => app.docker_pull(),
+        KeyCode::Char('r') => app.docker_restart(),
+        KeyCode::Char('s') => app.docker_stop(),
+        KeyCode::Char('S') => app.docker_start(),
+        KeyCode::Char('d') => app.docker_remove(false, false),
+        KeyCode::Char('X') => app.docker_remove(true, true),
+
+        // View operations
+        KeyCode::Char('l') => app.view_logs(),
+        KeyCode::Char('E') => app.inspect_env(),
+        KeyCode::Char('D') => app.view_stats(),
+        KeyCode::Char('T') => app.view_processes(),
+        KeyCode::Char('I') => app.view_inspect(),
+
+        // Script operations
+        KeyCode::Char('n') => app.create_script(),  // NEW: Create new script
+        KeyCode::Char('e') => app.edit_script(),
+        KeyCode::Char('v') => app.view_script(),
+        KeyCode::Char('x') => app.run_script(),
+        KeyCode::Char('b') => app.browse_for_script(),
+
+        // Refresh
+        KeyCode::Char('R') => app.refresh_containers(),
+
+        // Back
+        KeyCode::Esc | KeyCode::Char('q') => app.docker_go_back(),
+
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Handle input in docker confirmation dialog
+fn handle_docker_confirm_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::ConfirmDockerAction { action, return_mode } = &app.mode {
+        let action = action.clone();
+        let return_mode = *return_mode.clone();
+
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                app.execute_docker_action(action);
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.cancel_docker_action(return_mode);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in logs viewer
+fn handle_logs_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::LogsViewer { host_index, scroll_offset, log_buffer, follow_mode, .. } = &mut app.mode {
+        let host_index = *host_index;
+        match key.code {
+            KeyCode::Char('m') => {
+                // Load more logs
+                app.load_more_logs();
+            }
+            KeyCode::Char('f') => {
+                // Toggle follow mode
+                *follow_mode = !*follow_mode;
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                *follow_mode = false;
+                if *scroll_offset < log_buffer.len().saturating_sub(1) {
+                    *scroll_offset += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *follow_mode = false;
+                *scroll_offset = scroll_offset.saturating_sub(1);
+            }
+            KeyCode::Char('g') => {
+                *follow_mode = false;
+                *scroll_offset = 0;
+            }
+            KeyCode::Char('G') => {
+                // Go to bottom (enable follow)
+                *follow_mode = true;
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *follow_mode = false;
+                *scroll_offset = (*scroll_offset + 10).min(log_buffer.len().saturating_sub(1));
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *follow_mode = false;
+                *scroll_offset = scroll_offset.saturating_sub(10);
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in stats viewer
+fn handle_stats_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::StatsViewer { host_index, container_index, .. } = &app.mode {
+        let host_index = *host_index;
+        let container_index = *container_index;
+        match key.code {
+            KeyCode::Char('r') => {
+                // Refresh stats - go back and re-enter
+                app.mode = AppMode::ContainerList { host_index };
+                app.docker_selected_index = container_index;
+                app.view_stats();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in process viewer
+fn handle_process_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::ProcessViewer { host_index, container_index, processes, selected_index, .. } = &mut app.mode {
+        let host_index = *host_index;
+        let container_index = *container_index;
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if *selected_index < processes.len().saturating_sub(1) {
+                    *selected_index += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *selected_index = selected_index.saturating_sub(1);
+            }
+            KeyCode::Char('g') => *selected_index = 0,
+            KeyCode::Char('G') => {
+                *selected_index = processes.len().saturating_sub(1);
+            }
+            KeyCode::Char('r') => {
+                // Refresh processes - go back and re-enter
+                app.mode = AppMode::ContainerList { host_index };
+                app.docker_selected_index = container_index;
+                app.view_processes();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in inspect viewer
+fn handle_inspect_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::InspectViewer { host_index, container_index, .. } = &app.mode {
+        let host_index = *host_index;
+        let container_index = *container_index;
+        match key.code {
+            KeyCode::Char('r') => {
+                // Refresh inspect info - go back and re-enter
+                app.mode = AppMode::ContainerList { host_index };
+                app.docker_selected_index = container_index;
+                app.view_inspect();
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in environment inspector
+fn handle_env_inspector_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::EnvInspector { host_index, container_vars, selected_index, scroll_offset, search_query, .. } = &mut app.mode {
+        let host_index = *host_index;
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if *selected_index < container_vars.len().saturating_sub(1) {
+                    *selected_index += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *selected_index = selected_index.saturating_sub(1);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *scroll_offset = (*scroll_offset + 10).min(container_vars.len().saturating_sub(1));
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *scroll_offset = scroll_offset.saturating_sub(10);
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                search_query.push(c);
+            }
+            KeyCode::Backspace => {
+                search_query.pop();
+            }
+            KeyCode::Esc => {
+                if !search_query.is_empty() {
+                    search_query.clear();
+                } else {
+                    app.mode = AppMode::ContainerList { host_index };
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in script viewer
+fn handle_script_viewer_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::ScriptViewer { host_index, scroll_offset, script_content, .. } = &mut app.mode {
+        let host_index = *host_index;
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if *scroll_offset < script_content.len().saturating_sub(1) {
+                    *scroll_offset += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *scroll_offset = scroll_offset.saturating_sub(1);
+            }
+            KeyCode::Char('g') => *scroll_offset = 0,
+            KeyCode::Char('G') => {
+                *scroll_offset = script_content.len().saturating_sub(1);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *scroll_offset = (*scroll_offset + 10).min(script_content.len().saturating_sub(1));
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                *scroll_offset = scroll_offset.saturating_sub(10);
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in script editor
+fn handle_script_edit_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::ScriptEdit { host_index, focused_section, selected_index, editing_script, .. } = &app.mode {
+        let host_index = *host_index;
+        let focused_section = *focused_section;
+        let selected_index = *selected_index;
+        let env_vars_len = editing_script.env_vars.len();
+        let volumes_len = editing_script.volumes.len();
+        let ports_len = editing_script.ports.len();
+
+        match key.code {
+            // Navigation between sections
+            KeyCode::Tab => {
+                if let AppMode::ScriptEdit { focused_section, selected_index, .. } = &mut app.mode {
+                    *focused_section = focused_section.next();
+                    *selected_index = 0;
+                }
+            }
+            KeyCode::BackTab => {
+                if let AppMode::ScriptEdit { focused_section, selected_index, .. } = &mut app.mode {
+                    *focused_section = focused_section.previous();
+                    *selected_index = 0;
+                }
+            }
+
+            // Navigation within section
+            KeyCode::Char('j') | KeyCode::Down => {
+                if let AppMode::ScriptEdit { focused_section, selected_index, editing_script, .. } = &mut app.mode {
+                    let max = match focused_section {
+                        ScriptSection::EnvVars => editing_script.env_vars.len(),
+                        ScriptSection::Volumes => editing_script.volumes.len(),
+                        ScriptSection::Ports => editing_script.ports.len(),
+                        ScriptSection::Network => 1,
+                    };
+                    if *selected_index < max.saturating_sub(1) {
+                        *selected_index += 1;
+                    }
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let AppMode::ScriptEdit { selected_index, .. } = &mut app.mode {
+                    *selected_index = selected_index.saturating_sub(1);
+                }
+            }
+
+            // Add new item
+            KeyCode::Char('a') => {
+                match focused_section {
+                    ScriptSection::EnvVars => app.start_add_env_var(),
+                    _ => {} // TODO: Add volume/port editors
+                }
+            }
+
+            // Edit existing item
+            KeyCode::Enter => {
+                match focused_section {
+                    ScriptSection::EnvVars if env_vars_len > 0 => {
+                        app.start_edit_env_var();
+                    }
+                    _ => {}
+                }
+            }
+
+            // Delete item
+            KeyCode::Char('d') => {
+                match focused_section {
+                    ScriptSection::EnvVars if env_vars_len > 0 => {
+                        app.remove_env_var_from_current_script(selected_index);
+                    }
+                    ScriptSection::Volumes if volumes_len > 0 => {
+                        if let AppMode::ScriptEdit { editing_script, selected_index, .. } = &mut app.mode {
+                            if *selected_index < editing_script.volumes.len() {
+                                editing_script.volumes.remove(*selected_index);
+                                *selected_index = (*selected_index).min(editing_script.volumes.len().saturating_sub(1));
+                            }
+                        }
+                    }
+                    ScriptSection::Ports if ports_len > 0 => {
+                        if let AppMode::ScriptEdit { editing_script, selected_index, .. } = &mut app.mode {
+                            if *selected_index < editing_script.ports.len() {
+                                editing_script.ports.remove(*selected_index);
+                                *selected_index = (*selected_index).min(editing_script.ports.len().saturating_sub(1));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Save script (Ctrl+S)
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.save_current_script();
+            }
+
+            // Cancel and go back
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in environment variable editor
+fn handle_env_var_editor_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::EnvVarEditor { key_buffer, value_buffer, editing_key, .. } = &mut app.mode {
+        match key.code {
+            KeyCode::Tab => {
+                *editing_key = !*editing_key;
+            }
+            KeyCode::Enter => {
+                // Save the env var
+                app.save_env_var();
+            }
+            KeyCode::Esc => {
+                // Cancel and return to script edit
+                app.cancel_env_var_edit();
+            }
+            KeyCode::Char(c) => {
+                if *editing_key {
+                    // Key field: only allow alphanumeric and underscore, convert to uppercase
+                    if c.is_alphanumeric() || c == '_' {
+                        key_buffer.push(c.to_ascii_uppercase());
+                    }
+                } else {
+                    // Value field: allow any character
+                    value_buffer.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if *editing_key {
+                    key_buffer.pop();
+                } else {
+                    value_buffer.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in file browser
+fn handle_file_browser_input(app: &mut App, key: KeyEvent) -> Result<()> {
+    if let AppMode::FileBrowser { host_index, container_index, entries, selected_index, current_path, loading, .. } = &mut app.mode {
+        let host_index = *host_index;
+        let container_index = *container_index;
+
+        if *loading {
+            // Don't process input while loading
+            match key.code {
+                KeyCode::Esc => {
+                    app.mode = AppMode::ContainerList { host_index };
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if *selected_index < entries.len().saturating_sub(1) {
+                    *selected_index += 1;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                *selected_index = selected_index.saturating_sub(1);
+            }
+            KeyCode::Char('g') => *selected_index = 0,
+            KeyCode::Char('G') => {
+                *selected_index = entries.len().saturating_sub(1);
+            }
+            KeyCode::Enter => {
+                if *selected_index < entries.len() {
+                    let entry = &entries[*selected_index];
+                    if entry.is_dir {
+                        // Navigate into directory
+                        let new_path = if entry.name == ".." {
+                            // Go up
+                            let path = std::path::Path::new(&current_path);
+                            path.parent()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|| current_path.clone())
+                        } else {
+                            format!("{}/{}", current_path.trim_end_matches('/'), entry.name)
+                        };
+
+                        if let Some(host) = app.hosts.get(host_index).cloned() {
+                            // Match dockering's ls -la format
+                            let base_cmd = format!("ls -la {} 2>/dev/null | tail -n +2", new_path);
+                            let cmd = if app.use_sudo {
+                                format!("sudo -i {}", base_cmd)
+                            } else {
+                                base_cmd
+                            };
+                            app.pending_ssh_command = Some(crate::app::PendingSshCommand {
+                                host,
+                                command: cmd,
+                                command_type: crate::app::SshCommandType::ListDirectory { path: new_path.clone() },
+                            });
+                            *current_path = new_path;
+                            *loading = true;
+                            *selected_index = 0;
+                        }
+                    } else if entry.is_script {
+                        // Select this script for the container
+                        let script_path = format!("{}/{}", current_path.trim_end_matches('/'), entry.name);
+                        if let Some(host) = app.hosts.get(host_index).cloned() {
+                            let base_cmd = format!("cat {}", script_path);
+                            let cmd = if app.use_sudo {
+                                format!("sudo -i {}", base_cmd)
+                            } else {
+                                base_cmd
+                            };
+                            app.pending_ssh_command = Some(crate::app::PendingSshCommand {
+                                host,
+                                command: cmd,
+                                command_type: crate::app::SshCommandType::ReadScriptForContainer {
+                                    script_path,
+                                    container_index,
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                app.mode = AppMode::ContainerList { host_index };
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
