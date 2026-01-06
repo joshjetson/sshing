@@ -44,6 +44,10 @@ pub struct Metadata {
     /// Docker container script path associations (key: "host:container", value: script_path)
     #[serde(default)]
     pub docker_container_scripts: HashMap<String, String>,
+
+    /// Saved sort preference (persists across sessions)
+    #[serde(default)]
+    pub sort_by: String,
 }
 
 fn default_version() -> String {
@@ -58,6 +62,7 @@ impl Metadata {
             global_tags: Vec::new(),
             hosts: HashMap::new(),
             docker_container_scripts: HashMap::new(),
+            sort_by: String::new(),
         }
     }
 

@@ -82,10 +82,6 @@ fn handle_table_input(app: &mut App, key: KeyEvent) -> Result<()> {
         // Filters
         KeyCode::Char('/') => app.start_search(),
         KeyCode::Char('t') => app.start_tag_filter(),
-        KeyCode::Esc => {
-            app.clear_search();
-            app.apply_tag_filter(vec![]);
-        }
 
         // Sort
         KeyCode::Char('s') => app.cycle_sort(),
@@ -94,7 +90,7 @@ fn handle_table_input(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('?') => app.show_help(),
 
         // Quit
-        KeyCode::Char('q') => app.quit(),
+        KeyCode::Char('q') | KeyCode::Esc => app.quit(),
 
         _ => {}
     }

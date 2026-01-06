@@ -1,5 +1,5 @@
 use crate::models::Host;
-use crate::models::docker::{DeploymentScript, ContainerStats, ProcessInfo, ContainerInfo, FileEntry};
+use crate::models::docker::{DeploymentScript, ContainerStats, ProcessInfo, ContainerInfo, FileEntry, EnvVar};
 
 /// Application mode/state
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -214,6 +214,8 @@ pub enum AppMode {
         focused_section: ScriptSection,
         selected_index: usize,
         editing_mode: bool,
+        /// Original env vars when entering edit mode (for in-place modification)
+        original_env_vars: Vec<EnvVar>,
     },
 
     /// Environment variable editor
@@ -226,6 +228,8 @@ pub enum AppMode {
         value_buffer: String,
         editing_key: bool,
         is_new: bool,
+        /// Original env vars for in-place modification
+        original_env_vars: Vec<EnvVar>,
     },
 
     /// File browser for selecting scripts
@@ -338,6 +342,23 @@ impl SortBy {
             SortBy::User => "User",
             SortBy::Tags => "Tags",
         }
+    }
+
+    /// Parse from string (for loading from config)
+    pub fn from_str(s: &str) -> SortBy {
+        match s.to_lowercase().as_str() {
+            "name" => SortBy::Name,
+            "hostname" => SortBy::Hostname,
+            "lastused" | "last_used" | "last used" => SortBy::LastUsed,
+            "user" => SortBy::User,
+            "tags" => SortBy::Tags,
+            _ => SortBy::default(),
+        }
+    }
+
+    /// Convert to string for saving to config
+    pub fn as_config_str(&self) -> String {
+        self.label().to_lowercase().replace(' ', "_")
     }
 }
 

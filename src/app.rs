@@ -139,13 +139,20 @@ impl App {
             metadata.global_tags = all_tags;
         }
 
+        // Load sort preference from metadata
+        let sort_by = if metadata.sort_by.is_empty() {
+            SortBy::default()
+        } else {
+            SortBy::from_str(&metadata.sort_by)
+        };
+
         Ok(App {
             mode: AppMode::default(),
             hosts,
             selected_index: 0,
             search_query: String::new(),
             active_tag_filters: Vec::new(),
-            sort_by: SortBy::default(),
+            sort_by,
             ssh_config,
             metadata,
             metadata_path,
@@ -796,17 +803,15 @@ impl App {
         self.mode = AppMode::Table;
     }
 
-    /// Clear search
-    pub fn clear_search(&mut self) {
-        self.search_query.clear();
-        self.selected_index = 0;
-    }
-
     /// Cycle to next sort option
     pub fn cycle_sort(&mut self) {
         self.sort_by = self.sort_by.next();
         self.selected_index = 0; // Reset selection when sort changes
         self.status_message = Some(format!("Sorting by: {}", self.sort_by.label()));
+
+        // Save sort preference to metadata
+        self.metadata.sort_by = self.sort_by.as_config_str();
+        let _ = save_metadata(&self.metadata_path, &self.metadata);
     }
 
     /// Start tag filter mode
@@ -1164,6 +1169,7 @@ impl App {
 
                     // Switch to script edit mode
                     if let Some(host_index) = self.current_docker_host_index {
+                        let original_env_vars = script.env_vars.clone();
                         self.mode = AppMode::ScriptEdit {
                             host_index,
                             container_index,
@@ -1171,6 +1177,7 @@ impl App {
                             focused_section: ScriptSection::EnvVars,
                             selected_index: 0,
                             editing_mode: false,
+                            original_env_vars,
                         };
                         self.set_status("Script loaded and saved. Make changes and press Ctrl+S to save.".to_string());
                     }
@@ -1535,18 +1542,39 @@ impl App {
         if let AppMode::ContainerList { host_index } = self.mode {
             if self.docker_selected_index < self.containers.len() {
                 let container = &self.containers[self.docker_selected_index];
-                if let Some(script_path) = &container.script_path {
-                    // Find the script
-                    if let Some(script) = self.scripts.iter().find(|s| &s.path == script_path).cloned() {
-                        self.mode = AppMode::ScriptEdit {
-                            host_index,
-                            container_index: self.docker_selected_index,
-                            editing_script: script,
-                            focused_section: ScriptSection::EnvVars,
-                            selected_index: 0,
-                            editing_mode: false,
-                        };
+                let container_name = container.name.clone();
+
+                // First check if script is already loaded in memory
+                if let Some(script) = self.get_script_for_container(&container_name).cloned() {
+                    let original_env_vars = script.env_vars.clone();
+                    self.mode = AppMode::ScriptEdit {
+                        host_index,
+                        container_index: self.docker_selected_index,
+                        editing_script: script,
+                        focused_section: ScriptSection::EnvVars,
+                        selected_index: 0,
+                        editing_mode: false,
+                        original_env_vars,
+                    };
+                } else if let Some(script_path) = container.script_path.clone() {
+                    // Script path exists but script not loaded - fetch it via SSH
+                    if let Some(host) = self.get_current_docker_host().cloned() {
+                        let container_index = self.docker_selected_index;
+                        let cmd = self.sudo_cmd(&docker::read_script_command(&script_path));
+
+                        self.pending_ssh_command = Some(PendingSshCommand {
+                            host,
+                            command: cmd,
+                            command_type: SshCommandType::ReadScriptForContainer {
+                                script_path,
+                                container_index,
+                            },
+                        });
+
+                        self.set_status("Loading script...".to_string());
                     }
+                } else {
+                    self.set_error("No script for this container. Press [n] to create one.".to_string());
                 }
             }
         }
@@ -1634,6 +1662,7 @@ impl App {
                     focused_section: ScriptSection::EnvVars,
                     selected_index: 0,
                     editing_mode: false,
+                    original_env_vars: Vec::new(), // New script has no original env vars
                 };
 
                 self.set_status("Creating new script. Press Ctrl+S to save.".to_string());
@@ -1643,7 +1672,7 @@ impl App {
 
     /// Start adding a new env var in script editor
     pub fn start_add_env_var(&mut self) {
-        if let AppMode::ScriptEdit { host_index, container_index, editing_script, .. } = &self.mode {
+        if let AppMode::ScriptEdit { host_index, container_index, editing_script, original_env_vars, .. } = &self.mode {
             self.mode = AppMode::EnvVarEditor {
                 host_index: *host_index,
                 container_index: *container_index,
@@ -1653,13 +1682,14 @@ impl App {
                 is_new: true,
                 editing_script: editing_script.clone(),
                 var_index: None,
+                original_env_vars: original_env_vars.clone(),
             };
         }
     }
 
     /// Start editing an existing env var
     pub fn start_edit_env_var(&mut self) {
-        if let AppMode::ScriptEdit { host_index, container_index, editing_script, selected_index, focused_section, .. } = &self.mode {
+        if let AppMode::ScriptEdit { host_index, container_index, editing_script, selected_index, focused_section, original_env_vars, .. } = &self.mode {
             if *focused_section != ScriptSection::EnvVars {
                 return;
             }
@@ -1674,6 +1704,7 @@ impl App {
                     is_new: false,
                     editing_script: editing_script.clone(),
                     var_index: Some(*selected_index),
+                    original_env_vars: original_env_vars.clone(),
                 };
             }
         }
@@ -1688,6 +1719,7 @@ impl App {
             var_index,
             key_buffer,
             value_buffer,
+            original_env_vars,
             ..
         } = std::mem::replace(&mut self.mode, AppMode::Table) {
             if key_buffer.is_empty() {
@@ -1701,6 +1733,7 @@ impl App {
                     value_buffer,
                     editing_key: true,
                     is_new: var_index.is_none(),
+                    original_env_vars,
                 };
                 return;
             }
@@ -1726,13 +1759,14 @@ impl App {
                 focused_section: ScriptSection::EnvVars,
                 selected_index: 0,
                 editing_mode: false,
+                original_env_vars,
             };
         }
     }
 
     /// Cancel env var editing and return to script edit
     pub fn cancel_env_var_edit(&mut self) {
-        if let AppMode::EnvVarEditor { host_index, container_index, editing_script, .. } = &self.mode {
+        if let AppMode::EnvVarEditor { host_index, container_index, editing_script, original_env_vars, .. } = &self.mode {
             self.mode = AppMode::ScriptEdit {
                 host_index: *host_index,
                 container_index: *container_index,
@@ -1740,6 +1774,7 @@ impl App {
                 focused_section: ScriptSection::EnvVars,
                 selected_index: 0,
                 editing_mode: false,
+                original_env_vars: original_env_vars.clone(),
             };
         }
     }
@@ -1756,12 +1791,19 @@ impl App {
 
     /// Save current script to remote server
     pub fn save_current_script(&mut self) {
-        if let AppMode::ScriptEdit { host_index, editing_script, container_index, .. } = &self.mode {
+        if let AppMode::ScriptEdit { host_index, editing_script, container_index, original_env_vars, .. } = &self.mode {
             let host_index = *host_index;
             let container_index = *container_index;
+            let original_env_vars = original_env_vars.clone();
             if let Some(host) = self.hosts.get(host_index).cloned() {
-                // Generate updated script content
-                let new_content = docker::script_parser::generate_script(editing_script);
+                // Use in-place modification for existing scripts, generate for new ones
+                let new_content = if editing_script.raw_content.is_empty() {
+                    // New script - generate from scratch
+                    docker::script_parser::generate_script(editing_script)
+                } else {
+                    // Existing script - modify in place to preserve structure
+                    docker::apply_script_changes(editing_script, &original_env_vars)
+                };
 
                 let cmd = self.sudo_cmd(&docker::write_script_command(&editing_script.path, &new_content));
                 self.pending_ssh_command = Some(PendingSshCommand {
@@ -1774,10 +1816,10 @@ impl App {
 
                 // Update local script copy
                 let script_path = editing_script.path.clone();
-                let updated_script = editing_script.clone();
+                let mut updated_script = editing_script.clone();
+                updated_script.raw_content = new_content.clone();
                 if let Some(script) = self.scripts.iter_mut().find(|s| s.path == script_path) {
                     *script = updated_script.clone();
-                    script.raw_content = new_content;
                 } else {
                     // New script - add to list and associate with container
                     self.scripts.push(updated_script);

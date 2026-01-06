@@ -14,3 +14,4 @@ pub use discovery::{
     list_projects_command, find_scripts_command, read_script_command, write_script_command,
     parse_project_listing, parse_script_paths, create_script_from_content, run_script_command,
 };
+pub use script_parser::apply_script_changes;

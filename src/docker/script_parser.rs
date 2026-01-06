@@ -7,14 +7,18 @@ pub fn parse_script(content: &str, path: &str, client_name: &str) -> DeploymentS
     let mut script = DeploymentScript::new(path.to_string(), client_name.to_string());
     script.raw_content = content.to_string();
 
-    // Extract NAME variable
+    // Extract NAME variable first, then fall back to --name flag
     if let Some(name) = extract_variable(content, "NAME") {
+        script.container_name = name;
+    } else if let Some(name) = extract_container_name_flag(content) {
         script.container_name = name;
     }
 
-    // Extract REPO variable
+    // Extract REPO variable, or try to get image from docker command
     if let Some(repo) = extract_variable(content, "REPO") {
         script.repo = repo;
+    } else if let Some(image) = extract_docker_image(content) {
+        script.repo = image;
     }
 
     // Extract environment variables
@@ -157,19 +161,78 @@ fn extract_network(content: &str) -> Option<String> {
 
 /// Extract restart policy from --restart flag
 fn extract_restart_policy(content: &str) -> Option<String> {
-    let re = Regex::new(r#"--restart=(\S+)"#).unwrap();
-    re.captures(content)
-        .and_then(|caps| caps.get(1))
-        .map(|m| m.as_str().to_string())
+    let patterns = [
+        r#"--restart=(\S+)"#,
+        r#"--restart\s+(\S+)"#,
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            if let Some(caps) = re.captures(content) {
+                if let Some(m) = caps.get(1) {
+                    return Some(m.as_str().to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
-/// Generate script content from a DeploymentScript
+/// Extract container name from --name flag (for scripts without NAME variable)
+fn extract_container_name_flag(content: &str) -> Option<String> {
+    let patterns = [
+        r#"--name=([^\s\\]+)"#,
+        r#"--name\s+([^\s\\]+)"#,
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            if let Some(caps) = re.captures(content) {
+                if let Some(m) = caps.get(1) {
+                    let name = m.as_str().trim_matches('"').trim_matches('\'');
+                    // Skip if it's a variable reference like $NAME
+                    if !name.starts_with('$') {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract docker image from the end of docker run/create command
+fn extract_docker_image(content: &str) -> Option<String> {
+    // Look for the image at the end of docker run or docker create command
+    // The image is typically the last argument before any command to run
+    let patterns = [
+        // Match image after all flags, before newline or end
+        r#"(?:docker\s+(?:run|create)[^\n]*?)\s+([a-zA-Z0-9._/-]+(?::[a-zA-Z0-9._-]+)?)\s*(?:\n|$)"#,
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            if let Some(caps) = re.captures(content) {
+                if let Some(m) = caps.get(1) {
+                    let image = m.as_str();
+                    // Skip if it looks like a flag or variable
+                    if !image.starts_with('-') && !image.starts_with('$') {
+                        return Some(image.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Generate script content from a DeploymentScript (only used for new scripts)
 pub fn generate_script(script: &DeploymentScript) -> String {
     let mut lines = Vec::new();
 
-    lines.push("#! /usr/bin/env bash".to_string());
+    lines.push("#!/usr/bin/env bash".to_string());
     lines.push(String::new());
-    lines.push("#Configuration".to_string());
+    lines.push("# Configuration".to_string());
     lines.push(format!("NAME='{}'", script.container_name));
     lines.push(format!("REPO=\"{}\"", script.repo));
     lines.push(String::new());
@@ -183,28 +246,29 @@ pub fn generate_script(script: &DeploymentScript) -> String {
     let mut create_parts = vec!["docker create".to_string()];
 
     if let Some(ref network) = script.network {
-        create_parts.push(format!("--net={}", network));
+        create_parts.push(format!("  --net={}", network));
     }
 
-    create_parts.push("--name $NAME --restart=unless-stopped".to_string());
-
-    // Add environment variables
-    for env in &script.env_vars {
-        create_parts.push(format!("-e {}=\"{}\"", env.key, env.value));
-    }
+    create_parts.push("  --name $NAME".to_string());
+    create_parts.push("  --restart=unless-stopped".to_string());
 
     // Add ports
     for port in &script.ports {
-        create_parts.push(format!("-p {}:{}", port.host_port, port.container_port));
+        create_parts.push(format!("  -p {}:{}", port.host_port, port.container_port));
     }
 
     // Add volumes
     for vol in &script.volumes {
         let ro = if vol.read_only { ":ro" } else { "" };
-        create_parts.push(format!("-v {}:{}{}", vol.host_path, vol.container_path, ro));
+        create_parts.push(format!("  -v {}:{}{}", vol.host_path, vol.container_path, ro));
     }
 
-    create_parts.push(" $REPO".to_string());
+    // Add environment variables
+    for env in &script.env_vars {
+        create_parts.push(format!("  -e {}=\"{}\"", env.key, env.value));
+    }
+
+    create_parts.push("  $REPO".to_string());
 
     // Join with line continuations
     let create_cmd = create_parts.join(" \\\n");
@@ -214,4 +278,231 @@ pub fn generate_script(script: &DeploymentScript) -> String {
     lines.push("docker start $NAME".to_string());
 
     lines.join("\n")
+}
+
+/// Apply changes from a DeploymentScript back to its raw_content in-place
+/// This preserves the original script structure while updating env vars
+pub fn apply_script_changes(script: &DeploymentScript, original_env_vars: &[EnvVar]) -> String {
+    let mut content = script.raw_content.clone();
+
+    // Find which env vars were added, modified, or removed
+    let current_keys: std::collections::HashSet<_> = script.env_vars.iter().map(|e| &e.key).collect();
+    let original_keys: std::collections::HashSet<_> = original_env_vars.iter().map(|e| &e.key).collect();
+
+    // Remove deleted env vars first
+    for orig in original_env_vars {
+        if !current_keys.contains(&orig.key) {
+            content = remove_env_var(&content, &orig.key);
+        }
+    }
+
+    // Update existing and add new env vars
+    for env in &script.env_vars {
+        if original_keys.contains(&env.key) {
+            // Update existing
+            content = update_env_var(&content, &env.key, &env.value);
+        } else {
+            // Add new
+            content = add_env_var(&content, &env.key, &env.value);
+        }
+    }
+
+    content
+}
+
+/// Update an existing environment variable in the script content
+fn update_env_var(content: &str, key: &str, new_value: &str) -> String {
+    // Match various forms of -e KEY=VALUE
+    let patterns = [
+        format!(r#"(-e\s+{}=)"([^"]*)""#, regex::escape(key)),
+        format!(r#"(-e\s+{}=)'([^']*)'"#, regex::escape(key)),
+        format!(r#"(-e\s+{}=)([^\s\\]+)"#, regex::escape(key)),
+        format!(r#"(-e{}=)"([^"]*)""#, regex::escape(key)),
+        format!(r#"(-e{}=)'([^']*)'"#, regex::escape(key)),
+        format!(r#"(-e{}=)([^\s\\]+)"#, regex::escape(key)),
+    ];
+
+    for pattern in &patterns {
+        if let Ok(re) = Regex::new(pattern) {
+            if re.is_match(content) {
+                // Escape special characters in replacement value
+                let escaped_value = new_value.replace('\\', "\\\\").replace('$', "\\$");
+                let replacement = format!("${{1}}\"{}\"", escaped_value);
+                return re.replace(content, replacement.as_str()).to_string();
+            }
+        }
+    }
+
+    content.to_string()
+}
+
+/// Remove an environment variable from the script content
+fn remove_env_var(content: &str, key: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result_lines: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        // Check if this line contains the env var we want to remove
+        let env_pattern = format!(r#"-e\s*{}="#, regex::escape(key));
+        if let Ok(re) = Regex::new(&env_pattern) {
+            if re.is_match(trimmed) {
+                // Skip this line
+                // If previous line ends with \, we need to handle continuation
+                if !result_lines.is_empty() {
+                    let last_idx = result_lines.len() - 1;
+                    let last_line = &result_lines[last_idx];
+
+                    // Check if next line exists and is a continuation
+                    let has_more_after = i + 1 < lines.len() && !lines[i + 1].trim().is_empty()
+                        && (lines[i + 1].trim().starts_with('-')
+                            || lines[i + 1].trim().starts_with('$')
+                            || lines[i + 1].trim().starts_with('"'));
+
+                    if last_line.trim_end().ends_with('\\') && !has_more_after {
+                        // Remove the trailing \ from previous line
+                        result_lines[last_idx] = last_line.trim_end().trim_end_matches('\\').trim_end().to_string();
+                    }
+                }
+                i += 1;
+                continue;
+            }
+        }
+
+        result_lines.push(line.to_string());
+        i += 1;
+    }
+
+    result_lines.join("\n")
+}
+
+/// Add a new environment variable to the script content
+fn add_env_var(content: &str, key: &str, value: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result_lines: Vec<String> = Vec::new();
+    let mut inserted = false;
+
+    // Find the best place to insert:
+    // 1. After the last existing -e flag
+    // 2. Before the image/repo reference at the end of docker command
+    // 3. After -p or -v flags
+
+    let mut last_env_line_idx: Option<usize> = None;
+    let mut last_flag_line_idx: Option<usize> = None;
+    let mut docker_cmd_end_idx: Option<usize> = None;
+
+    // Find positions
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.contains("-e ") || trimmed.starts_with("-e") {
+            last_env_line_idx = Some(i);
+        }
+        if trimmed.starts_with("-p ") || trimmed.starts_with("-p")
+            || trimmed.starts_with("-v ") || trimmed.starts_with("-v")
+            || trimmed.starts_with("--")
+        {
+            last_flag_line_idx = Some(i);
+        }
+        // Find line with $REPO or image name at end of docker command
+        if (trimmed.starts_with('$') || trimmed.contains("$REPO"))
+            && !trimmed.contains('=')
+            && i > 0
+            && lines[i - 1].trim_end().ends_with('\\')
+        {
+            docker_cmd_end_idx = Some(i);
+        }
+    }
+
+    // Determine insertion point
+    let insert_after = last_env_line_idx
+        .or(last_flag_line_idx)
+        .or(docker_cmd_end_idx.map(|i| i.saturating_sub(1)));
+
+    // Detect indentation from existing -e lines or other flag lines
+    let indent = if let Some(idx) = last_env_line_idx {
+        let line = lines[idx];
+        let trimmed = line.trim_start();
+        &line[..line.len() - trimmed.len()]
+    } else if let Some(idx) = last_flag_line_idx {
+        let line = lines[idx];
+        let trimmed = line.trim_start();
+        &line[..line.len() - trimmed.len()]
+    } else {
+        "  "
+    };
+
+    // Escape the value properly for shell
+    let escaped_value = escape_shell_value(value);
+    let new_line = format!("{}-e {}={}", indent, key, escaped_value);
+
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(insert_idx) = insert_after {
+            if i == insert_idx && !inserted {
+                // Make sure current line has continuation
+                let mut current_line = line.to_string();
+                if !current_line.trim_end().ends_with('\\') {
+                    current_line = format!("{} \\", current_line.trim_end());
+                }
+                result_lines.push(current_line);
+
+                // Add the new env var with continuation if needed
+                let needs_continuation = i + 1 < lines.len()
+                    && !lines[i + 1].trim().is_empty()
+                    && !lines[i + 1].trim().starts_with('#');
+
+                if needs_continuation {
+                    result_lines.push(format!("{} \\", new_line));
+                } else {
+                    result_lines.push(new_line.clone());
+                }
+                inserted = true;
+                continue;
+            }
+        }
+        result_lines.push(line.to_string());
+    }
+
+    // If we couldn't find a good place, append before docker start
+    if !inserted {
+        // Find docker start line and insert before it
+        let mut final_lines: Vec<String> = Vec::new();
+        for line in &result_lines {
+            if line.trim().starts_with("docker start") && !inserted {
+                final_lines.push(format!("  -e {}={} \\", key, escape_shell_value(value)));
+                inserted = true;
+            }
+            final_lines.push(line.clone());
+        }
+        if inserted {
+            return final_lines.join("\n");
+        }
+    }
+
+    result_lines.join("\n")
+}
+
+/// Escape a value for safe use in shell scripts
+fn escape_shell_value(value: &str) -> String {
+    // If value contains special characters, wrap in double quotes
+    if value.contains(' ')
+        || value.contains('$')
+        || value.contains('\\')
+        || value.contains('"')
+        || value.contains('\'')
+        || value.contains('!')
+        || value.contains('`')
+        || value.is_empty()
+    {
+        // Escape internal double quotes and backslashes
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        format!("\"{}\"", escaped)
+    } else {
+        // Simple value can be quoted for consistency
+        format!("\"{}\"", value)
+    }
 }
