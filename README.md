@@ -16,6 +16,16 @@ A modern, terminal-based SSH connection manager with an intuitive TUI interface.
   - [SSH Flags & Shell Selection](#ssh-flags--shell-selection)
   - [Tags & Organization](#tags--organization)
   - [Search & Filter](#search--filter)
+- [Docker Container Management](#docker-container-management)
+  - [Entering Docker Mode](#entering-docker-mode)
+  - [Container List View](#container-list-view)
+  - [Container Actions](#container-actions)
+  - [Container Inspection Tools](#container-inspection-tools)
+  - [Deployment Scripts](#deployment-scripts)
+- [Rsync File Synchronization](#rsync-file-synchronization)
+  - [Entering Rsync Mode](#entering-rsync-mode)
+  - [Using the File Browser](#using-the-file-browser)
+  - [Executing Rsync](#executing-rsync)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
 - [Configuration](#configuration)
 - [Contributing](#contributing)
@@ -33,6 +43,8 @@ A modern, terminal-based SSH connection manager with an intuitive TUI interface.
 - Search and filter hosts in real-time
 - Connect to any server with a single keystroke
 - Customize SSH flags and shell per connection
+- **Manage Docker containers** on remote servers with full control over logs, stats, and deployment scripts
+- **Sync files with rsync** using an interactive file browser
 
 All your configuration is stored in standard SSH config format, so sshing works seamlessly with existing SSH tools and workflows.
 
@@ -47,12 +59,29 @@ All your configuration is stored in standard SSH config format, so sshing works 
 - **Visual Host Management** - Full CRUD operations with an intuitive form editor
 - **Vim-Style Navigation** - Navigate with `j/k`, jump with `g/G`, page with `Ctrl+d/u`
 - **Real-Time Search** - Filter hosts as you type with live overlay
--  **Tag System** - Organize hosts with a global tag pool (prod, staging, dev, etc.)
-- 🔑 **SSH Key Selector** - Visual picker to select multiple keys per host
-- ⚙️ **SSH Flags & Shell Selection** - Customize connection behavior per host
+- **Tag System** - Organize hosts with a global tag pool (prod, staging, dev, etc.)
+- **SSH Key Selector** - Visual picker to select multiple keys per host
+- **SSH Flags & Shell Selection** - Customize connection behavior per host
 - **Jump Host Support** - Configure ProxyJump for bastion hosts
-- **Flexible Sorting** - Sort by name, hostname, last used, or user
--  **Usage Tracking** - Automatically track when you last connected to each host
+- **Flexible Sorting** - Sort by name, hostname, last used, user, or tags
+- **Usage Tracking** - Automatically track when you last connected to each host
+
+### Docker Container Management
+- **Container Overview** - View all containers with status, image, ports at a glance
+- **Container Actions** - Start, stop, restart, pull, remove, and purge containers
+- **Log Viewer** - View container logs with follow mode and adjustable line counts
+- **Stats Monitor** - Real-time CPU and memory usage visualization
+- **Process Viewer** - See running processes inside containers (docker top)
+- **Container Inspect** - Deep dive into container configuration, ports, volumes, networks
+- **Environment Inspector** - View and search environment variables
+- **Deployment Scripts** - Associate and manage deployment scripts with containers
+- **Script Editor** - Edit env vars, ports, volumes, and network settings visually
+
+### Rsync File Synchronization
+- **Bidirectional Sync** - Push files to remote or pull files from remote
+- **Interactive File Browser** - Navigate local and remote filesystems visually
+- **Compression Toggle** - Enable/disable rsync compression on the fly
+- **Path Completion** - Type paths directly or browse to select
 
 ### Technical Features
 - **SSH Config Integration** - Reads from and writes to `~/.ssh/config`
@@ -293,6 +322,213 @@ Press `s` to cycle through sort options:
 - **Hostname** - Sort by IP/hostname
 - **Last Used** - Most recently used first
 - **User** - Sort by username
+- **Tags** - Sort by first tag alphabetically (hosts without tags appear last)
+
+[↑ Back to Top](#table-of-contents)
+
+---
+
+## Docker Container Management
+
+sshing includes powerful Docker container management capabilities, allowing you to manage containers on any remote server directly from the TUI.
+
+### Entering Docker Mode
+
+1. Select a host from the main table
+2. Press `d` to enter Docker mode
+3. sshing will SSH to the server and fetch container information
+4. The container list view will appear showing all containers
+
+> **Note:** Docker must be installed on the remote server. When entering Docker mode, you'll be prompted whether to use `sudo` for Docker commands. Choose **Yes** if Docker requires root privileges on the server, or **No** if the server has a docker group configured for non-root access. This choice applies to all Docker commands during the session.
+
+### Container List View
+
+The container list displays:
+- **Status indicator** - `● Up` (running), `○ Down` (stopped), `✗ Failed` (exited with error)
+- **Container name** - The name of the container
+- **Image** - The Docker image (shortened for display)
+- **Ports** - Port mappings
+- **Script** - Whether a deployment script is associated (`✓ has script` or `✗ no script`)
+
+Navigate with `j/k` or arrow keys. The title bar shows scroll position when the list exceeds screen height.
+
+### Container Actions
+
+From the container list, you can perform these actions:
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `S` | Start | Start a stopped container |
+| `s` | Stop | Stop a running container |
+| `r` | Restart | Restart the container |
+| `p` | Pull | Pull the latest image for the container |
+| `d` | Delete | Remove the container (with confirmation) |
+| `X` | Purge | Remove container AND its image |
+
+### Container Inspection Tools
+
+sshing provides several tools to inspect running containers:
+
+#### Log Viewer (`l`)
+- View container logs in real-time
+- Press `f` to toggle follow mode (live updates)
+- Press `+`/`-` to increase/decrease line count (100 → 500 → 1000 → 5000 → 50000)
+- Scroll with `j/k`, `g/G`, `Ctrl+d/u`
+
+#### Stats Viewer (`D`)
+- View real-time CPU and memory usage
+- Visual bar graphs show resource utilization
+- Auto-refreshes every few seconds
+
+#### Process Viewer (`T`)
+- View running processes inside the container (equivalent to `docker top`)
+- Shows PID, user, CPU%, memory%, and command
+- Navigate through processes with `j/k`
+
+#### Container Inspect (`I`)
+- Deep inspection of container configuration
+- View ports, volumes, networks, and full configuration
+- Navigate sections with `j/k`
+
+#### Environment Inspector (`E`)
+- View all environment variables in the container
+- Search/filter variables by typing
+- Compare with deployment script variables
+
+### Deployment Scripts
+
+A key feature of sshing's Docker integration is the ability to associate **deployment scripts** with containers. These are shell scripts (typically containing `docker run` or `docker create` commands) that define how a container should be deployed.
+
+#### Why Deployment Scripts?
+
+- **Reproducibility** - Store your exact container configuration as a script
+- **Version control** - Keep scripts in your project repository
+- **Easy redeployment** - Run the script to recreate the container with the same settings
+
+#### Browsing for Scripts (`b`)
+
+1. Press `b` from the container list to open the file browser
+2. Navigate to find your deployment script on the remote server
+3. Common locations: project directories, `/opt`, home directories
+4. Press `Enter` to select a script
+
+sshing looks for scripts matching patterns like:
+- `start*.sh`, `deploy*.sh`, `run*.sh`, `docker*.sh`
+- Scripts in common project directories
+
+#### Script Viewer (`v`)
+
+Once a script is associated:
+- Press `v` to view the full script content
+- See the parsed configuration (env vars, ports, volumes, network)
+
+#### Script Editor (`e`)
+
+Edit deployment scripts visually:
+- **Env Vars tab** - Add, edit, or remove environment variables
+- **Ports tab** - Manage port mappings
+- **Volumes tab** - Configure volume mounts
+- **Network tab** - Set network mode
+
+Navigate tabs with `Tab`/`Shift+Tab`, edit values with `Enter`, save with `Ctrl+S`.
+
+#### Running Scripts (`x`)
+
+Press `x` to execute the deployment script, which will:
+1. Stop and remove the existing container (if running)
+2. Run the deployment script to create a new container
+3. Refresh the container list
+
+#### Replacing Containers (`b`)
+
+Press `b` on a container with an existing script to browse for a different script, replacing the association.
+
+[↑ Back to Top](#table-of-contents)
+
+---
+
+## Rsync File Synchronization
+
+sshing includes an interactive rsync interface for synchronizing files between your local machine and remote servers.
+
+### Entering Rsync Mode
+
+1. Select a host from the main table
+2. Press `r` to enter rsync mode
+3. Configure source and destination paths
+4. Execute the sync
+
+> **Note:** Rsync must be installed on both your local machine and the remote server. If rsync is not available locally, the `r` key will be greyed out in the footer.
+
+### Rsync Interface
+
+The rsync view shows:
+- **Source path** - Where files will be copied FROM (labeled `[local]` or `[remote]`)
+- **Destination path** - Where files will be copied TO
+- **Direction indicator** - Shows `Local → Remote` or `Remote → Local`
+- **Compression status** - Whether `-z` flag is enabled
+
+### Navigation & Controls
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move to next field |
+| `k` / `↑` | Move to previous field |
+| `i` / `Enter` | Edit the selected field |
+| `r` | Toggle sync direction (push/pull) |
+| `z` | Toggle compression |
+| `b` | Open file browser for current field |
+| `Space` | Execute rsync |
+| `Esc` / `q` | Return to host list |
+
+### Using the File Browser
+
+Instead of typing paths manually, press `b` to open an interactive file browser:
+
+1. The browser opens showing the appropriate filesystem:
+   - **Source field + pushing to remote** → Local filesystem
+   - **Source field + pulling from remote** → Remote filesystem
+   - **Dest field** → Opposite of source
+
+2. Navigate with:
+   - `j/k` or arrows to move through entries
+   - `Enter` to enter a directory or select a file
+   - `Space` to select the current directory as the path
+   - `Backspace` or `h` to go up one directory
+   - `g/G` to jump to top/bottom
+   - `Esc` to cancel
+
+3. The selected path is inserted into the field
+
+### Executing Rsync
+
+1. Configure your source and destination paths
+2. Toggle direction with `r` if needed (default: push to remote)
+3. Enable compression with `z` for slow connections
+4. Press `Space` to execute
+
+sshing will run rsync with:
+- `-avz` flags (archive, verbose, compress if enabled)
+- Proper SSH connection using the host's configuration
+- Progress displayed in the terminal
+
+After completion, you'll return to the rsync view with a status message.
+
+### Example Workflows
+
+**Deploy local files to server:**
+1. Press `r` on a host
+2. Set source: `/home/user/project/dist/`
+3. Set dest: `/var/www/html/`
+4. Ensure direction shows `Local → Remote`
+5. Press `Space` to sync
+
+**Download logs from server:**
+1. Press `r` on a host
+2. Press `r` to toggle direction to `Remote → Local`
+3. Press `b` to browse, navigate to `/var/log/myapp/`
+4. Set local dest: `/home/user/logs/`
+5. Press `Space` to sync
 
 [↑ Back to Top](#table-of-contents)
 
@@ -313,7 +549,9 @@ Press `s` to cycle through sort options:
 | `Space` / `Enter` | Connect to selected host |
 | `n` | Create new host |
 | `e` | Edit selected host |
-| `d` | Delete selected host |
+| `D` | Delete selected host |
+| `d` | Enter Docker mode |
+| `r` | Enter Rsync mode |
 | `/` | Search hosts |
 | `t` | Filter by tags |
 | `s` | Cycle sort order |
@@ -390,6 +628,79 @@ Press `s` to cycle through sort options:
 |-----|--------|
 | `y` / `Y` / `Enter` | Confirm deletion |
 | `n` / `N` / `Esc` | Cancel |
+
+### Docker Container List
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `↑` / `↓` | Navigate containers |
+| `g` / `G` | Jump to first/last container |
+| `Ctrl+d` / `Ctrl+u` | Page down/up |
+| `S` | Start container |
+| `s` | Stop container |
+| `r` | Restart container |
+| `p` | Pull latest image |
+| `d` | Delete container |
+| `X` | Purge container and image |
+| `l` | View logs |
+| `D` | View stats |
+| `T` | View processes (top) |
+| `I` | Inspect container |
+| `E` | View environment variables |
+| `b` | Browse for deployment script |
+| `n` | Create new script |
+| `v` | View associated script |
+| `e` | Edit associated script |
+| `x` | Execute deployment script |
+| `Esc` | Return to host list |
+
+### Docker Log Viewer
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `↑` / `↓` | Scroll logs |
+| `g` / `G` | Jump to top/bottom |
+| `Ctrl+d` / `Ctrl+u` | Page down/up |
+| `f` | Toggle follow mode |
+| `+` / `=` | Increase line count |
+| `-` | Decrease line count |
+| `Esc` | Return to container list |
+
+### Docker Script Editor
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Switch between tabs |
+| `j` / `k` / `↑` / `↓` | Navigate items |
+| `Enter` | Edit selected item |
+| `a` / `n` | Add new item |
+| `d` | Delete selected item |
+| `Ctrl+S` | Save script |
+| `Esc` | Cancel / Return |
+
+### Rsync Mode
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `↑` / `↓` | Navigate fields |
+| `i` / `Enter` | Edit current field |
+| `r` | Toggle sync direction |
+| `z` | Toggle compression |
+| `b` | Open file browser |
+| `Space` | Execute rsync |
+| `Esc` / `q` | Return to host list |
+
+### File Browser (Rsync & Docker)
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` / `↑` / `↓` | Navigate entries |
+| `g` / `G` | Jump to first/last entry |
+| `Ctrl+d` / `Ctrl+u` | Page down/up |
+| `Enter` | Enter directory / Select file |
+| `Space` | Select current directory |
+| `Backspace` / `h` | Go up one directory |
+| `Esc` | Cancel |
 
 [↑ Back to Top](#table-of-contents)
 

@@ -313,6 +313,8 @@ pub enum SortBy {
     LastUsed,
     /// Sort by user
     User,
+    /// Sort by tags (alphabetically by first tag)
+    Tags,
 }
 
 impl SortBy {
@@ -322,7 +324,8 @@ impl SortBy {
             SortBy::Name => SortBy::Hostname,
             SortBy::Hostname => SortBy::LastUsed,
             SortBy::LastUsed => SortBy::User,
-            SortBy::User => SortBy::Name,
+            SortBy::User => SortBy::Tags,
+            SortBy::Tags => SortBy::Name,
         }
     }
 
@@ -333,6 +336,7 @@ impl SortBy {
             SortBy::Hostname => "Hostname",
             SortBy::LastUsed => "Last Used",
             SortBy::User => "User",
+            SortBy::Tags => "Tags",
         }
     }
 }

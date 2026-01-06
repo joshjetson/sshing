@@ -107,6 +107,22 @@ fn get_tag_color(tag: &str) -> Color {
 fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
     let filtered_hosts = app.filtered_hosts();
 
+    // Calculate visible rows (subtract 3 for borders and header)
+    let visible_rows = area.height.saturating_sub(4) as usize;
+    let total_hosts = filtered_hosts.len();
+    let selected = app.selected_index;
+
+    // Compute scroll_offset to keep selection visible
+    let scroll_offset = if visible_rows == 0 {
+        0
+    } else if selected < visible_rows / 2 {
+        0
+    } else if selected >= total_hosts.saturating_sub(visible_rows / 2) {
+        total_hosts.saturating_sub(visible_rows)
+    } else {
+        selected.saturating_sub(visible_rows / 2)
+    };
+
     // Create table headers
     let header_cells = ["Host", "Hostname", "User", "Port", "Keys", "Tags", "Note"]
         .iter()
@@ -117,12 +133,21 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
         .height(1)
         .bottom_margin(1);
 
+    // Only render visible rows
+    let end_index = (scroll_offset + visible_rows).min(total_hosts);
+    let visible_hosts = if total_hosts > 0 {
+        &filtered_hosts[scroll_offset..end_index]
+    } else {
+        &filtered_hosts[..]
+    };
+
     // Create table rows
-    let rows: Vec<Row> = filtered_hosts
+    let rows: Vec<Row> = visible_hosts
         .iter()
         .enumerate()
         .map(|(i, host)| {
-            let is_selected = i == app.selected_index;
+            let actual_index = scroll_offset + i;
+            let is_selected = actual_index == app.selected_index;
 
             // Get primary tag color for the row
             let primary_color = host
@@ -167,6 +192,19 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
+    // Show scroll position in title if needed
+    let title = if total_hosts > visible_rows && visible_rows > 0 {
+        format!(
+            " Hosts ({}-{} of {}/{}) ",
+            scroll_offset + 1,
+            end_index,
+            total_hosts,
+            app.hosts.len()
+        )
+    } else {
+        format!(" Hosts ({}/{}) ", filtered_hosts.len(), app.hosts.len())
+    };
+
     // Create the table
     let table = Table::new(
         rows,
@@ -181,15 +219,7 @@ fn render_host_table(frame: &mut Frame, app: &App, area: Rect) {
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(
-                " Hosts ({}/{}) ",
-                filtered_hosts.len(),
-                app.hosts.len()
-            )),
-    )
+    .block(Block::default().borders(Borders::ALL).title(title))
     .column_spacing(1);
 
     frame.render_widget(table, area);

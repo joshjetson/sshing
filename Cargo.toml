@@ -1,6 +1,6 @@
 [package]
 name = "sshing"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["Josh <josh@zelifcam.net>"]
 description = "A terminal-based SSH connection manager"
